@@ -8,6 +8,7 @@ import path from "node:path";
 process.env.MAILHUB_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "mailhub-unit-"));
 const { validateConfig, wranglerConfigs, names, passwordProblem } = await import("../scripts/lib/config.mjs");
 const common = await import("../scripts/lib/common.mjs");
+test.after(() => fs.rmSync(process.env.MAILHUB_STATE_DIR, { recursive: true, force: true }));
 
 const base = { domain: "Demo.Test", web_host: "mail.demo.test", login_user: " me@example.org " };
 
