@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // 云端域名邮箱界面 = 一个「带登录的网关 Worker」：
+  //   · 同源提供 SPA 静态资源
+  //   · 账号密码登录 → 签名 Cookie
+  //   · 已登录时把 /admin/* 与 /api/* 代理给 CFMail，服务端注入密钥
+  // 好处见 src/index.js 顶部注释：密钥不进浏览器、不需要 CORS、只记一个账号密码。
+  "name": "mail",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+
+  // 自定义域名。写在这里，`wrangler deploy` 会自动建好绑定与 DNS 记录 ——
+  // 之前它随着一个被删掉的项目一起消失，导致 mail.example.com 直接连不上。
+  "routes": [
+    { "pattern": "mail.example.com", "custom_domain": true }
+  ],
+
+  // 关掉 workers.dev 预览地址：主域名之外不需要第二个公开入口。
+  "workers_dev": false,
+
+  "assets": {
+    "directory": "../frontend/dist-cloud",
+    "binding": "ASSETS",
+    // 未命中静态文件的路径一律回 index.html，交给 react-router。
+    // 注意：**产物里绝不能放 _redirects**，Workers 会校验它，
+    // `/* /index.html 200` 会被判为无限循环而拒绝整个部署（错误码 100324）。
+    "not_found_handling": "single-page-application"
+  },
+
+  // 非敏感默认值；密钥类一律用 `wrangler secret put` 设置，不写在这里。
+  "vars": {
+    "CFMAIL_BASE_URL": "https://api-mail.example.com"
+  }
+}

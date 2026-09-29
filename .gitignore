@@ -1,0 +1,56 @@
+# ── 凭据（铁律：永不进 git）─────────────────────────────
+.env
+.env.*
+!.env.example
+!*.env.example
+secrets/
+*.pem
+*.key
+
+# ── 数据（本机资产，不入库）────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+backups/
+
+# ── Python ────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── Node / 前端 ───────────────────────────────────────
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ── 运行时 ────────────────────────────────────────────
+*.log
+logs/
+*.pid
+.claude/scheduled_tasks.lock
+
+# ── OS / 编辑器 ───────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+backups/
+logs/
+.run/
+
+# wrangler 本地缓存（含 Cloudflare account id，不入库）
+.wrangler/
+
+# ── MailHub Kit 安装器（kit/）的本机状态：配置、进度、本地密钥 ──
+.mailhub/
+.dev.vars

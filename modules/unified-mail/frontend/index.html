@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mail-hub · 统一邮箱管理</title>
+    <!-- 站点图标：与页头 logo 同一个信箱字形 + 同一条品牌渐变。
+         没有这几行时浏览器会给默认的小地球。SVG 版本清晰度与主题无关（渐变底两种
+         标签栏都压得住），PNG 版本给 iOS「添加到主屏幕」用。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#8B5CF6" />
+    <script>
+      // pre-paint：在首屏前定主题，避免亮/暗闪烁。?theme=dark|light 可强制覆盖（可分享链接）。
+      try {
+        var q = new URLSearchParams(location.search).get('theme');
+        if (q === 'dark' || q === 'light') localStorage.setItem('theme', q);
+        var t = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

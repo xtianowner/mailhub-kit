@@ -1,0 +1,323 @@
+const KEYWORD_PATTERNS = [
+  "验证码",
+  "校验码",
+  "驗證碼",
+  "验证代码",
+  "校验代码",
+  "認證碼",
+  "verification code",
+  "verify code",
+  "security code",
+  "passcode",
+  "one-time code",
+  "one time code",
+  "one-time password",
+  "one time password",
+  "login code",
+  "otp",
+  "chatgpt",
+  "openai",
+];
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const KEYWORD_RE = new RegExp(
+  KEYWORD_PATTERNS
+    .slice()
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegex)
+    .join("|"),
+  "i",
+);
+
+const INLINE_PATTERNS = [
+  {
+    name: "keyword_before_code",
+    score: 130,
+    re: new RegExp(
+      `(?:${KEYWORD_PATTERNS.map(escapeRegex).join("|")})(?:\\s|&nbsp;|[：:：\\-–—]){0,8}(?:is|为|是|為)?(?:\\s|&nbsp;|[：:：\\-–—]){0,8}([A-Z0-9]{4,10})`,
+      "ig",
+    ),
+  },
+  {
+    name: "code_before_keyword",
+    score: 118,
+    re: new RegExp(
+      `\\b([A-Z0-9]{4,10})\\b(?:\\s|&nbsp;|[：:：\\-–—]){0,8}(?:is|为|是|為)?(?:\\s|&nbsp;|[：:：\\-–—]){0,8}(?:${KEYWORD_PATTERNS.map(escapeRegex).join("|")})`,
+      "ig",
+    ),
+  },
+  {
+    name: "generic_code_label",
+    score: 88,
+    re: /\bcode\b(?:\s|[：:：\-–—]){0,6}([A-Z0-9]{4,10})/gi,
+  },
+];
+
+export function normalizeText(input = "") {
+  return String(input ?? "")
+    .normalize("NFKC")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00A0/g, " ")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+export function decodeHtmlEntities(input = "") {
+  const named = {
+    nbsp: " ",
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    copy: "©",
+    reg: "®",
+    trade: "™",
+  };
+
+  return String(input ?? "")
+    .replace(/&#(\d+);/g, (_, num) => {
+      const code = Number.parseInt(num, 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&([a-z]+);/gi, (full, name) => named[name.toLowerCase()] ?? full);
+}
+
+export function htmlToText(html = "") {
+  const stripped = String(html ?? "")
+    .replace(/<head[\s\S]*?<\/head>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|section|article|tr|td|th|li|ul|ol|table|h1|h2|h3|h4|h5|h6)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+
+  return normalizeText(decodeHtmlEntities(stripped));
+}
+
+function looksLikeCodeToken(token) {
+  if (!token) return false;
+  if (!/^[A-Z0-9]{4,10}$/i.test(token)) return false;
+
+  const upper = token.toUpperCase();
+  const hasDigit = /\d/.test(upper);
+  const hasLetter = /[A-Z]/.test(upper);
+
+  if (/^\d{4}$/.test(upper)) {
+    const n = Number(upper);
+    if (n >= 1900 && n <= 2099) return false;
+  }
+
+  if (/^\d{4,8}$/.test(upper)) return true;
+  if (hasDigit && hasLetter) return true;
+
+  // 纯字母 token 一律**不**算验证码。
+  //
+  // 旧规则是 `hasLetter && upper.length <= 6 → true`，于是英文验证信里满地的
+  // 4-6 字母单词（YOUR / CODE / LOGIN / EMAIL / VERIFY…）全被当成候选码；
+  // 又因为「主题行」权重高、且「附近有关键词」再 +70，主题里的 YOUR 能直接
+  // 盖过正文里真正的数字码。实测（2026-07-27）：
+  //     "Your code is 123456"            → 旧规则给出 "YOUR"
+  //     "Your ChatGPT code is 908070"    → 旧规则给出 "CODE"
+  //     线上真实邮件                       → 曾给出 "ZWNJ"
+  // 中文信不受影响（"您的验证码是 123456" 一直是对的），所以这个 bug 一直
+  // 藏在英文侧 —— 而 ChatGPT / OpenAI 的验证信恰好都是英文。
+  //
+  // 邮件验证码在实践中要么纯数字、要么数字+字母混合；纯字母的极罕见，
+  // 用它换回英文信全线可用是划算的。真遇到纯字母码，再按「整行只有这个 token」
+  // 这类强证据单独放行，不要退回宽松规则。
+  if (!hasDigit) return false;
+
+  return false;
+}
+
+function isLikelyDateOrTime(token, line) {
+  const t = token.toUpperCase();
+  const l = line.toUpperCase();
+
+  if (new RegExp(`\\b\\d{1,2}:\\d{2}(?::\\d{2})?\\b`).test(l) && l.includes(t)) {
+    return true;
+  }
+  if (new RegExp(`\\b\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\b`).test(l) && l.includes(t)) {
+    return true;
+  }
+  if (new RegExp(`\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b`).test(l) && l.includes(t)) {
+    return true;
+  }
+  if (/^\d{4}$/.test(t)) {
+    const n = Number(t);
+    if (n >= 1900 && n <= 2099) return true;
+  }
+  return false;
+}
+
+function isInEmailAddress(token, line) {
+  const upperLine = line.toUpperCase();
+  if (!upperLine.includes("@")) return false;
+  return upperLine.includes(token.toUpperCase() + "@") || upperLine.includes("+" + token.toUpperCase());
+}
+
+function keywordCount(text) {
+  const matches = normalizeText(text).match(new RegExp(KEYWORD_RE.source, "ig"));
+  return matches ? matches.length : 0;
+}
+
+function sourceWeight(source) {
+  switch (source) {
+    case "text":
+      return 36;
+    case "html":
+      return 31;
+    case "subject":
+      return 18;
+    default:
+      return 0;
+  }
+}
+
+function tokenWeight(token) {
+  const upper = token.toUpperCase();
+  if (/^\d{6}$/.test(upper)) return 24;
+  if (/^\d{5}$/.test(upper)) return 20;
+  if (/^\d{4,8}$/.test(upper)) return 16;
+  if (/^(?=.*\d)(?=.*[A-Z])[A-Z0-9]{4,10}$/.test(upper)) return 14;
+  return 8;
+}
+
+function snippetAround(text, index, radius = 60) {
+  const start = Math.max(0, index - radius);
+  const end = Math.min(text.length, index + radius);
+  return normalizeText(text.slice(start, end));
+}
+
+function collectInlineCandidates(source, text) {
+  const normalized = normalizeText(text);
+  const candidates = [];
+
+  for (const pattern of INLINE_PATTERNS) {
+    const regex = new RegExp(pattern.re.source, pattern.re.flags);
+    let match;
+    while ((match = regex.exec(normalized)) !== null) {
+      const code = String(match[1] || "").toUpperCase();
+      if (!looksLikeCodeToken(code)) continue;
+
+      const snippet = snippetAround(normalized, match.index);
+      let score = pattern.score + sourceWeight(source) + tokenWeight(code);
+
+      if (KEYWORD_RE.test(snippet)) score += 10;
+      if (/chatgpt|openai/i.test(snippet)) score += 8;
+      if (isLikelyDateOrTime(code, snippet)) score -= 140;
+      if (isInEmailAddress(code, snippet)) score -= 140;
+
+      candidates.push({
+        code,
+        source,
+        score,
+        strategy: pattern.name,
+        snippet,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function collectLineCandidates(source, text) {
+  const normalized = normalizeText(text);
+  const lines = normalized
+    .split("\n")
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
+  const candidates = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const prev = lines[i - 1] || "";
+    const next = lines[i + 1] || "";
+    const combinedContext = normalizeText([prev, line, next].filter(Boolean).join("\n"));
+    const hasKeywordHere = KEYWORD_RE.test(line);
+    const hasKeywordNear = KEYWORD_RE.test(combinedContext);
+    const tokenMatches = line.match(/\b[A-Z0-9]{4,10}\b/gi) || [];
+
+    for (const tokenRaw of tokenMatches) {
+      const code = tokenRaw.toUpperCase();
+      if (!looksLikeCodeToken(code)) continue;
+
+      let score = sourceWeight(source) + tokenWeight(code);
+      if (hasKeywordHere) score += 70;
+      else if (hasKeywordNear) score += 48;
+      if (/chatgpt|openai/i.test(combinedContext)) score += 8;
+      if (/[:：]/.test(line)) score += 4;
+      if (keywordCount(combinedContext) > 1) score += 6;
+
+      if (isLikelyDateOrTime(code, combinedContext)) score -= 140;
+      if (isInEmailAddress(code, combinedContext)) score -= 140;
+      if (/https?:\/\//i.test(combinedContext)) score -= 18;
+
+      candidates.push({
+        code,
+        source,
+        score,
+        strategy: hasKeywordHere ? "line_with_keyword" : hasKeywordNear ? "near_keyword" : "standalone_line",
+        snippet: combinedContext,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function dedupeAndRank(candidates) {
+  const freq = new Map();
+  for (const candidate of candidates) {
+    freq.set(candidate.code, (freq.get(candidate.code) || 0) + 1);
+  }
+
+  return candidates
+    .map((candidate) => ({
+      ...candidate,
+      score: candidate.score + ((freq.get(candidate.code) || 0) - 1) * 8,
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+export function extractVerificationCode({ subject = "", text = "", html = "" } = {}) {
+  const htmlText = htmlToText(html);
+  const sources = [
+    { source: "text", text },
+    { source: "html", text: htmlText },
+    { source: "subject", text: subject },
+  ];
+
+  let candidates = [];
+  for (const item of sources) {
+    if (!normalizeText(item.text)) continue;
+    candidates = candidates.concat(collectInlineCandidates(item.source, item.text));
+    candidates = candidates.concat(collectLineCandidates(item.source, item.text));
+  }
+
+  const ranked = dedupeAndRank(candidates).filter((item) => item.score >= 40);
+  const best = ranked[0] || null;
+
+  return {
+    code: best?.code || null,
+    source: best?.source || null,
+    score: best?.score || 0,
+    snippet: best?.snippet || "",
+    htmlText,
+    candidates: ranked.slice(0, 10),
+  };
+}

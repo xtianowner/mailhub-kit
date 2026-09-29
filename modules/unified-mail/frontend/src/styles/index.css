@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-bg text-text font-body antialiased;
+    margin: 0;
+  }
+  h1, h2, h3, h4 {
+    @apply font-heading;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+    /* --bg 光晕：在动态/渐变背景上也保证 focus ring 自身 ≥3:1 可见（不依赖背景对比） */
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--bg) 80%, transparent);
+  }
+}
+
+/* Backdrop atmosphere layers — each fills its host (absolute inset-0). Bundled here because
+   mask/size/blend don't map to single Tailwind utilities. Toggled by <Backdrop/>; values in tokens.css. */
+@layer components {
+  .bd-glow    { background: var(--bg-glow); }
+  .bd-mesh    { background: var(--bg-mesh); }
+  .bd-aurora  { background: var(--bg-aurora); background-size: 200% 200%; background-position: 0% 50%; }
+  .bd-animate { animation: aurora-pan 26s var(--ease-inout) infinite alternate; }
+  .bd-grid {
+    background-image: var(--bg-grid);
+    background-size: var(--grid-size) var(--grid-size);
+    -webkit-mask: var(--grid-mask) center / cover no-repeat;
+            mask: var(--grid-mask) center / cover no-repeat;
+  }
+  .bd-dots {
+    background-image: var(--bg-dots);
+    background-size: var(--grid-size) var(--grid-size);
+    -webkit-mask: var(--grid-mask) center / cover no-repeat;
+            mask: var(--grid-mask) center / cover no-repeat;
+  }
+  .bd-grain   { background-image: var(--bg-grain); opacity: var(--grain-opacity); mix-blend-mode: overlay; }
+  .bd-vignette{ background: var(--bg-vignette); }
+}
+
+/* aurora drift — GPU-cheap background pan; the global prefers-reduced-motion rule freezes it. */
+@keyframes aurora-pan {
+  from { background-position: 0% 50%; }
+  to   { background-position: 100% 50%; }
+}
