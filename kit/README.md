@@ -9,7 +9,7 @@
 | 路径 | 作用 |
 |---|---|
 | `skill/mailhub-setup/SKILL.md` | agent 技能（Agent Skills 标准格式）：问询模板、步骤表、退出码处理、红线 |
-| `scripts/setup.mjs` | 总控：`init` / `plan` / `all` / 单步，14 个步骤 |
+| `scripts/setup.mjs` | 总控：`init` / `plan` / `all` / 单步（14 步）；`status` 现状与下一步；`confirm` 用户确认后记为完成；`wrangler …` 透传给自带的 wrangler 并带上账号 |
 | `scripts/local.mjs` | 本地版 `start` / `stop` / `status`；停止后复核进程与端口已释放 |
 | `scripts/set-login.mjs` | 用户本人在终端里设置登录名和密码（不回显、输两次） |
 | `scripts/verify.mjs` | 10 项线上 + 本地验收，并打印交付信息 |
@@ -33,6 +33,12 @@
 
   用户同意后才加对应的放行参数（`--allow-existing-mx` / `--take-over-catch-all` / `--take-over-host` / `--reuse-workers`）。同意会记进 `state.json`，并绑定当时的域名、地址或前缀。DNS 等查询失败时一律停下，不当成「没有」。
 - **wrangler 做不到或做不对的操作走 REST**：设置「兜底规则 → Worker」（4.142 的命令只接受 forward / drop）、查自定义域名占用、查同名 Worker。
+- **完成标准 = 机器验收全绿 + 用户本人确认**：
+  - 每步的结果都记进 `state.json`：成功记完成时间；失败记在 `last_error`，并撤销这一步旧的完成记录。
+  - `status` 据此告诉 agent 现在到哪、卡在哪、下一步跑什么。
+  - `confirm` 不看旧记录，当场重跑 10 项验收，并到数据接口里查有没有发给 `test@域名` 的信（地址可用 `--mail` 指定），两项都过才记为完成。
+- **重新 `init` 是合并式**：只改传入的参数，其余沿用原值（`--no-attachments` 关闭附件）。配置一变，旧的完成记录和用户确认都作废；各步可重跑，已有资源会复用。「这些 Worker 是本套件建的」这条记录绑定前缀，换了前缀要重新检查同名 Worker。
+- **放行只对用户看到的那条生效**：地址冲突会一次列全；`--take-over-host <地址>` 只放行这一个地址。
 - 本机状态全部在仓库根的 `.mailhub/`（已被 git 忽略）：`config.json` 问询结果、`state.json` 进度、`generated/` 生成的 wrangler 配置和 `.dev.vars`（权限 600）。
 
 ## 测试

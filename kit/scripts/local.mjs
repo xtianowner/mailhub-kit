@@ -74,6 +74,7 @@ async function start({ open }) {
   const run = readJson(LOCAL_RUN);
   if (run && alive(run.pid) && (await probe(run.port))?.local) {
     log.ok(`本地版已在运行：http://${HOST}:${run.port}`);
+    if (open) openBrowser(`http://${HOST}:${run.port}`);
     return run.port;
   }
   if (run) fs.rmSync(LOCAL_RUN, { force: true });

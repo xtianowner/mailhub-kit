@@ -64,6 +64,10 @@ const server = http.createServer(async (req, res) => {
     return send(200, { Status: 0, Answer: data.map((d) => ({ type: code, data: d })) });
   }
   if (p === "/api-host/") return send(200, { ok: true, domains: 1 });
+  if (p === "/api-host/admin/mails") {
+    if (req.headers["x-admin-auth"] !== api.ADMIN_TOKEN) return send(401, { ok: false });
+    return send(200, { results: (w.testMails || {})[url.searchParams.get("address")] || [] });
+  }
   if (p === "/api-host/admin/domains") {
     return req.headers["x-admin-auth"] && req.headers["x-admin-auth"] === api.ADMIN_TOKEN
       ? send(200, { ok: true, domains: [DOMAIN] }) : send(401, { ok: false });
@@ -157,6 +161,9 @@ test("DNS 查询失败 → 停下，不当成「没有记录」", async () => {
   const r = await setup("preflight");
   assert.equal(r.code, 10, r.out);
   assert.match(r.out, /无法确认/);
+  const st = JSON.parse((await setup("status", "--json")).out);
+  assert.equal(st.last_error.step, "preflight", "卡在哪一步要记下来，供向用户报告现状");
+  assert.equal(st.finished, false);
   patch({ dohStatus: 0 });
 });
 
@@ -177,17 +184,21 @@ test("已有生效的兜底规则指向别处 → 不静默接管", async () => 
   patch({ routing: { enabled: false, status: "unconfigured" }, catchAll: { enabled: false, actions: [{ type: "drop", value: [] }] } });
 });
 
-test("网址已有 DNS 记录或已绑定别的 Worker → 不静默覆盖", async () => {
-  patch({ dns: { [WEB]: { CNAME: ["exmail.qq.com."] } } });
+test("网址已被占用 → 一次列出全部冲突；同意只对点名的地址生效，并被记住", async () => {
+  patch({ dns: { [WEB]: { CNAME: ["exmail.qq.com."] }, [API]: { A: ["203.0.113.7"] } } });
   let r = await setup("preflight");
   assert.equal(r.code, 10, r.out);
   assert.match(r.out, /mail\.demo\.test 已有 DNS 记录（exmail\.qq\.com）/);
+  assert.match(r.out, /api-mail\.demo\.test 已有 DNS 记录（203\.0\.113\.7）/, "两个冲突要一次说清");
+  r = await setup("preflight", "--take-over-host", WEB);
+  assert.equal(r.code, 10, "只同意了登录网址，数据接口地址仍要停下");
+  assert.doesNotMatch(r.out, /· mail\.demo\.test/);
+  assert.match(r.out, /· api-mail\.demo\.test/);
   assert.equal((await setup("preflight", "--take-over-host")).code, 0);
-  assert.equal((await setup("preflight")).code, 0, "同意过一次就记住，重跑不必再加参数");
+  assert.equal((await setup("preflight")).code, 0, "同意过就记住，重跑不必再加参数");
   patch({ dns: {}, workerDomains: [{ hostname: API, service: "someone-elses-worker" }] });
   r = await setup("preflight");
-  assert.equal(r.code, 10, r.out);
-  assert.match(r.out, /已绑定到 Worker「someone-elses-worker」/, "对另一个地址的同意不能套用");
+  assert.equal(r.code, 0, "该地址已被用户同意占用");
   patch({ workerDomains: [] });
 });
 
@@ -252,6 +263,74 @@ test("重跑幂等：自己建的网址与 Worker 不算冲突；不重复建库
   assert.equal(after.secrets["mailhub-api"].ADMIN_TOKEN, before.secrets["mailhub-api"].ADMIN_TOKEN, "本机密钥复用，不轮换");
 });
 
+test("完成标准：当场重跑验收 + 查到测试信才算完成；过期的 ✅ 骗不过 confirm", async () => {
+  let st = JSON.parse((await setup("status", "--json")).out);
+  assert.equal(st.next_step, null, "机器步骤应全部完成");
+  assert.equal(st.finished, false, "用户没确认前不算完成");
+  assert.match((await setup("status")).out, /还差用户本人确认三件事/);
+
+  let r = await setup("confirm");
+  assert.equal(r.code, 10, r.out);
+  assert.match(r.out, /还没查到发给 test@demo\.test 的邮件/);
+
+  patch({ testMails: { "test@demo.test": [{ subject: "hi", received_at: "2026-09-28T10:00:00Z" }] } });
+  // 收信路由被人关掉了：旧记录里 verify 还是 ✅，但 confirm 当场重跑验收，必须拒绝
+  patch({ routing: { enabled: false, status: "disabled" } });
+  r = await setup("confirm");
+  assert.equal(r.code, 1, r.out);
+  st = JSON.parse((await setup("status", "--json")).out);
+  assert.equal(st.done.verify, undefined, "验收失败后撤销旧的完成记录");
+  assert.equal(st.finished, false);
+
+  patch({ routing: { enabled: true, status: "ready" } });
+  r = await setup("confirm");
+  assert.equal(r.code, 0, r.out);
+  st = JSON.parse((await setup("status", "--json")).out);
+  assert.equal(st.finished, true);
+});
+
+test("重新 init 只改传入的参数；换前缀后要重新检查同名 Worker", async () => {
+  let r = await setup("init", "--attachments");
+  assert.equal(r.code, 0, r.out);
+  let cfg = JSON.parse(fs.readFileSync(path.join(STATE_DIR, "config.json"), "utf8"));
+  assert.deepEqual([cfg.domain, cfg.web_host, cfg.api_host, cfg.login_user, cfg.prefix, cfg.attachments],
+    [DOMAIN, WEB, API, "me@example.org", "mailhub", true]);
+  let st = JSON.parse((await setup("status", "--json")).out);
+  assert.equal(st.user_confirmed, null, "配置变了，旧的确认作废");
+  assert.equal(st.next_step, "zone");
+
+  r = await setup("init", "--prefix", "mh2");
+  assert.equal(r.code, 0, r.out);
+  patch({ scripts: [...world().scripts, "mh2-web"] });
+  r = await setup("preflight");
+  assert.equal(r.code, 10, "换前缀 = 收信要从 mailhub-inbox 切到 mh2-inbox，必须先问");
+  assert.match(r.out, /原来接收邮件的 Worker「mailhub-inbox」将不再收到新邮件/);
+  r = await setup("preflight", "--take-over-catch-all");
+  assert.equal(r.code, 10, "mailhub-* 是自己建的，不代表 mh2-* 也是");
+  assert.match(r.out, /已有同名 Worker：mh2-web/);
+
+  assert.equal((await setup("confirm")).code, 1, "配置变了之后，验收没重跑通过就不能记为完成");
+  assert.equal((await setup("init", "--prefix", "mailhub", "--no-attachments")).code, 0);
+});
+
+test("setup.mjs wrangler 透传：长驻命令能被正常停掉（信号转发给子进程）", async () => {
+  const child = spawn(process.execPath, [path.join(KIT, "scripts", "setup.mjs"), "wrangler", "dev", "--port", "18897"], { cwd: ROOT, env, stdio: "ignore" });
+  let up = false;
+  for (let i = 0; i < 40 && !up; i += 1) {
+    await new Promise((r) => setTimeout(r, 250));
+    up = await fetch("http://127.0.0.1:18897/auth/status").then((r) => r.ok).catch(() => false);
+  }
+  assert.ok(up, "透传的长驻命令应已启动");
+  child.kill("SIGTERM");
+  await new Promise((r) => child.on("close", r));
+  let down = false;
+  for (let i = 0; i < 20 && !down; i += 1) {
+    await new Promise((r) => setTimeout(r, 250));
+    down = await fetch("http://127.0.0.1:18897/auth/status").then(() => false).catch(() => true);
+  }
+  assert.ok(down, "父进程被停掉后，透传的子进程也必须停掉");
+});
+
 test("stop 不误杀进程号被复用的无关进程", async () => {
   await local("stop");
   const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore" });
@@ -267,6 +346,14 @@ test("契约：安装器调用过的每条 wrangler 命令，参数都能通过�
   if (!fs.existsSync(REAL_WRANGLER)) return t.skip("未安装 wrangler");
   const calls = world().calls.filter((c) => !["dev", "login", "whoami"].includes(c[0]));
   const unique = [...new Map(calls.map((c) => [c.slice(0, 3).join(" ") + (c.includes("--file") ? " file" : ""), c])).values()];
+  // SKILL.md 里让 agent 手动执行的命令（经 setup.mjs wrangler 透传），同样要过真 wrangler 的参数校验。
+  const gen = (w) => path.join(STATE_DIR, "generated", `wrangler.${w}.json`);
+  unique.push(
+    ["tail", "mailhub-inbox", "--format", "pretty"],
+    ["d1", "execute", "mailhub-db", "--remote", "--yes", "-c", gen("api"), "--command",
+      "INSERT INTO domains (id, domain, enabled, fixed_subdomain, random_subdomains, created_at) VALUES ('domain_second_test', 'second.test', 1, NULL, '[]', datetime('now')) ON CONFLICT(domain) DO UPDATE SET enabled = 1"],
+    ["email", "routing", "enable", "second.test"],
+  );
   const dummy = path.join(TMP, "dummy-secrets.json");
   fs.writeFileSync(dummy, "{\"X\":\"y\"}", { mode: 0o600 });
   const argErr = /Unknown argument|Not enough non-option|Missing required argument|Invalid values|only supports|mutually exclusive/i;

@@ -60,7 +60,7 @@ export function loadConfig() {
   if (!raw) {
     throw new StepError(`还没有配置文件 ${CONFIG_FILE}`, {
       code: EXIT.BAD_INPUT,
-      next: "先按 SKILL.md 第 1 步问询用户，再执行：node kit/scripts/setup.mjs init --domain ... --web-host ... --login-user ...",
+      next: "先按 SKILL.md 第 4 节问询用户，再执行：node kit/scripts/setup.mjs init --domain ... --web-host ... --login-user ...",
     });
   }
   return validateConfig(raw);

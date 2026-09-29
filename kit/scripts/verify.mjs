@@ -3,7 +3,7 @@
 //   node kit/scripts/verify.mjs          退出码 0 = 全部通过
 import path from "node:path";
 
-import { DEV_VARS, EXIT, KIT, LOCAL_RUN, ROOT, loadState, readDevVars, readJson, reportError } from "./lib/common.mjs";
+import { DEV_VARS, EXIT, KIT, LOCAL_RUN, ROOT, loadState, readDevVars, readJson, reportError, saveState } from "./lib/common.mjs";
 import { loadConfig, names } from "./lib/config.mjs";
 import { catchAllRule, fetchx, isCloudflareMx, lookupMx, routingSettings } from "./lib/cf.mjs";
 
@@ -102,14 +102,22 @@ export async function runChecks({ print = true } = {}) {
     密钥在本机 ${DEV_VARS}（CFMAIL_ADMIN_TOKEN / CFMAIL_SITE_PASSWORD）
     接口说明：${path.join(KIT, "docs", "data-api.md")}
 🔑 改登录密码：node ${rel(path.join(KIT, "scripts", "set-login.mjs"))}
-──────────────────────────────────────────────`);
+──────────────────────────────────────────────
+机器验收已全部通过。请用户亲自确认三件事，都没问题后执行 node kit/scripts/setup.mjs confirm：
+  ① 用自己的密码登录云端网页   ② 发给 test@${cfg.domain} 的信在网页里看到了   ③ 本地版能打开`);
   }
   return allOk;
 }
 
 if (process.argv[1]?.endsWith("verify.mjs")) {
   try {
-    process.exit((await runChecks()) ? EXIT.OK : EXIT.FAIL);
+    const ok = await runChecks();
+    // 与 setup.mjs verify 同样记账：通过记完成时间，失败撤销旧的完成记录（不让过期的 ✅ 骗过 confirm）。
+    const { done = {} } = loadState();
+    if (ok) done.verify = new Date().toISOString();
+    else delete done.verify;
+    saveState({ done });
+    process.exit(ok ? EXIT.OK : EXIT.FAIL);
   } catch (err) {
     process.exit(reportError(err));
   }

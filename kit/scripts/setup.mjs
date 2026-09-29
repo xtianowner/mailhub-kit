@@ -10,12 +10,15 @@
 //   node kit/scripts/setup.mjs all            按顺序跑完全部步骤（可重跑，已完成的自动跳过）
 //   node kit/scripts/setup.mjs <步骤名>        只跑某一步
 //   node kit/scripts/setup.mjs plan           只打印计划，不做任何改动
+//   node kit/scripts/setup.mjs status [--json] 现状：每步是否完成、卡在哪、下一步、是否已达成完成标准
+//   node kit/scripts/setup.mjs confirm        用户本人确认可用后记为完成（要求机器验收已通过）
+//   node kit/scripts/setup.mjs wrangler <参数>  透传给 kit 自带的 wrangler（自动带上账号），排障与手动操作用
 //
 // 退出码：0 成功 / 1 失败（看「下一步」）/ 2 配置不合法 / 10 需要用户本人操作（看「请你操作」）
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 import {
   BASE_SCHEMA, DEV_VARS, EXIT, GEN_DIR, KIT, ROOT, STATE_DIR, StepError, WRANGLER_JS,
@@ -58,16 +61,27 @@ function consented(name, subject) {
 /* ── 各步骤 ─────────────────────────────────────────────── */
 
 function stepInit() {
+  // 重新 init 只改传入的参数，其余沿用已有配置 —— 否则「只想开附件」会把前缀、地址、用户名悄悄重置成默认值。
+  const before = readJson(path.join(STATE_DIR, "config.json"));
+  const prev = before || {};
+  const domainChanged = opt("domain") !== undefined && opt("domain") !== prev.domain;
   const cfg = {
-    domain: opt("domain"),
-    web_host: opt("web-host"),
-    api_host: opt("api-host"),
-    login_user: opt("login-user"),
-    attachments: flag("attachments"),
-    prefix: opt("prefix") || "mailhub",
+    domain: opt("domain") ?? prev.domain,
+    web_host: opt("web-host") ?? prev.web_host,
+    // 换了域名又没给数据接口地址：按新域名重新派生，而不是沿用旧域名下的地址。
+    api_host: opt("api-host") ?? (domainChanged ? undefined : prev.api_host),
+    login_user: opt("login-user") ?? prev.login_user,
+    attachments: flag("attachments") ? true : flag("no-attachments") ? false : (prev.attachments ?? false),
+    prefix: opt("prefix") ?? prev.prefix ?? "mailhub",
   };
   saveConfig(cfg);
   const saved = loadConfig();
+  if (before && JSON.stringify(before) !== JSON.stringify(saved)) {
+    // 配置变了：之前的完成记录与用户确认都不再代表现状（各步可重跑，已有资源会复用）。
+    const { done = {} } = loadState();
+    saveState({ done: { deps: done.deps, login: done.login }, user_confirmed: null, last_error: null });
+    log.info("配置有变化：已清空之前的完成记录，接下来按新配置重跑各步");
+  }
   log.ok(`已保存配置：${path.relative(ROOT, path.join(STATE_DIR, "config.json"))}`);
   for (const [k, v] of Object.entries(saved)) log.info(`${k} = ${v}`);
 }
@@ -141,7 +155,7 @@ async function stepLogin() {
 
 async function stepZone() {
   const cfg = loadConfig();
-  const waitMin = Number(opt("wait") || 0);
+  const waitMin = Math.min(Number(opt("wait") || 0), 8); // 多数 agent 工具单条命令上限 10 分钟
   const deadline = Date.now() + waitMin * 60_000;
   for (;;) {
     const zone = await findZone(cfg.domain);
@@ -161,12 +175,17 @@ async function stepZone() {
       const ns = (zone.name_servers || []).join("  ");
       throw needHuman(`${cfg.domain} 已加入 Cloudflare，但还没生效（状态：${zone.status}）`,
         `去你买域名的平台，把名称服务器（NS）改成：${ns}\n` +
-        `改完后执行：node kit/scripts/setup.mjs zone --wait 30（最多等 30 分钟，生效即继续）`);
+        `改完后执行：node kit/scripts/setup.mjs zone --wait 8（最多等 8 分钟，生效即继续；NS 生效有时要几小时）`);
     }
     log.info(`等待 ${cfg.domain} 生效（当前 ${zone.status}），30 秒后再查…`);
     await sleep(30_000);
   }
 }
+
+/** 接管兜底规则的后果，用用户听得懂的话说。 */
+const catchAllImpact = (act) => (act?.type === "worker"
+  ? `原来接收邮件的 Worker「${(act.value || []).join(", ")}」将不再收到新邮件`
+  : act?.type === "forward" ? `原来转发到 ${(act.value || []).join(", ")} 的邮件将不再转发` : "原来的处理方式将停止");
 
 /** 地址是否被别的服务占用：已绑定到别的 Worker，或已有 DNS 记录且不是我们的 Worker。 */
 async function hostConflict(accountId, host, ourWorker) {
@@ -205,24 +224,31 @@ async function stepPreflight() {
     const ours = act?.type === "worker" && (act.value || []).includes(n.inbox);
     if (rule?.enabled && !ours && act?.type !== "drop" && !consented("take-over-catch-all", cfg.domain)) {
       throw needHuman(`${cfg.domain} 已有一条生效的 Email Routing 兜底规则（${act?.type} → ${(act?.value || []).join(", ")}）`,
-        "接入会把它改成交给 MailHub，原来的转发会停止。确认可以接管后，我会加 --take-over-catch-all 继续。");
+        `接入会把它改成交给 ${n.inbox}，${catchAllImpact(act)}。确认可以接管后，我会加 --take-over-catch-all 继续。`);
     }
   }
 
   // 3) 两个网址不能已被别的服务占用。wrangler 在非交互模式下会**静默覆盖**已有记录，所以必须先查。
+  //    先把冲突收齐一次性告诉用户；同意按地址逐个记录，只对用户看到的那几个地址生效。
+  const conflicts = [];
   for (const [host, worker] of [[cfg.web_host, n.web], [cfg.api_host, n.api]]) {
     let why;
     try { why = await hostConflict(st.account_id, host, worker); } catch (e) { throw unknown(` ${host} 是否已被占用`, e); }
-    if (why && !consented("take-over-host", host)) {
-      throw needHuman(`${host} ${why}`,
-        "继续部署会把这个地址改成指向 MailHub，原来的网站或服务就打不开了。请你决定：\n" +
-        "· 换一个地址：告诉我新地址，我重新 init\n" +
-        "· 确认这个地址没在用：告诉我「确认占用」，我会加 --take-over-host 继续");
-    }
+    if (why) conflicts.push([host, why]);
+  }
+  const named = opt("take-over-host");
+  const pending = conflicts.filter(([host]) => (named && named !== host
+    ? !loadState().consents?.[`take-over-host:${host}`]
+    : !consented("take-over-host", host)));
+  if (pending.length) {
+    throw needHuman(`这些地址已被占用：\n${pending.map(([h, why]) => `· ${h} ${why}`).join("\n")}`,
+      "继续部署会把它们改成指向 MailHub，原来的网站或服务就打不开了。请你决定：\n" +
+      "· 换地址：告诉我新地址，我重新 init\n" +
+      "· 确认这些地址没在用：告诉我「确认占用」，我会加 --take-over-host 继续（只同意其中一个时用 --take-over-host <地址>）");
   }
 
   // 4) 账号里已有同名 Worker、但不是本套件建的 → 不覆盖。
-  if (!st.workers_deployed && !consented("reuse-workers", cfg.prefix)) {
+  if (st.workers_deployed_prefix !== cfg.prefix && !consented("reuse-workers", cfg.prefix)) {
     const existing = await workerNames(st.account_id);
     const clash = [n.inbox, n.api, n.web].filter((w) => existing.has(w));
     if (clash.length) {
@@ -286,7 +312,7 @@ function stepR2() {
   if (/10042|enable R2|purchase/i.test(out)) {
     throw needHuman("你的 Cloudflare 账号还没开通 R2（保存附件需要）",
       "打开 https://dash.cloudflare.com/ → 左侧「R2 Object Storage」→ 按提示绑定信用卡或 PayPal 并开通（免费额度 10GB，不超不扣费）。\n" +
-      "不想开通也可以：把 .mailhub/config.json 里 attachments 改成 false，收信照常，只是不存附件。");
+      "不想开通也可以：告诉我「不存附件」，我会用 --no-attachments 重新 init，收信照常，只是不存附件。");
   }
   throw new StepError("创建 R2 存储桶失败\n" + out.slice(-800));
 }
@@ -313,8 +339,13 @@ function removeSecretFiles() {
   if (!fs.existsSync(GEN_DIR)) return;
   for (const f of fs.readdirSync(GEN_DIR)) if (f.startsWith(".secrets-")) fs.rmSync(path.join(GEN_DIR, f), { force: true });
 }
+let activeChild = null; // `setup.mjs wrangler ...` 透传时的子进程：被中断时要一起停掉
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(sig, () => { removeSecretFiles(); process.exit(130); });
+  process.on(sig, () => {
+    if (activeChild) { try { activeChild.kill(sig); } catch { /* 已退出 */ } }
+    removeSecretFiles();
+    process.exit(130);
+  });
 }
 
 /** 带密钥部署：密钥写进 600 临时文件，随版本一起上传，用完立刻删除。 */
@@ -333,14 +364,13 @@ function deployWithSecrets(which, secrets, what) {
 }
 
 function customDomainHint(host) {
-  return `如果报错提到 ${host} 已有 DNS 记录：说明这个地址被别的服务占用了。` +
-    `换一个地址（改 .mailhub/config.json）或到 Cloudflare DNS 删掉那条记录后重跑。`;
+  return `如果报错提到 ${host} 已被占用：先运行 node kit/scripts/setup.mjs preflight 查看冲突详情，按提示处理。`;
 }
 
 function stepDeployInbox() {
   const cfg = loadConfig();
   wranglerOk(["deploy", "-c", configPath("inbox")], {}, "部署收信 Worker");
-  saveState({ workers_deployed: true });
+  saveState({ workers_deployed_prefix: cfg.prefix });
   log.ok(`收信 Worker 已部署：${names(cfg).inbox}`);
 }
 
@@ -399,7 +429,7 @@ async function stepDeployWeb() {
   const vars = readDevVars();
   const existing = remoteSecretNames("web");
   // 读不到密钥列表时不能当成「没有」：否则会重新生成会话签名串，把所有已登录设备踢下线。
-  if (!existing && loadState().web_deployed) {
+  if (!existing && loadState().web_deployed_prefix === cfg.prefix) {
     throw new StepError("读取登录网页的密钥列表失败", { next: "稍后重跑：node kit/scripts/setup.mjs deploy-web" });
   }
   const secrets = {
@@ -411,7 +441,7 @@ async function stepDeployWeb() {
   };
   try {
     deployWithSecrets("web", secrets, "部署登录网页");
-    saveState({ web_deployed: true });
+    saveState({ web_deployed_prefix: cfg.prefix });
   } catch (e) {
     e.next = customDomainHint(cfg.web_host);
     throw e;
@@ -452,7 +482,7 @@ async function stepRouting() {
     // 与 preflight 同一道保护：在两步之间有人改了规则，也不静默接管。
     if (rule?.enabled && act?.type !== "drop" && !consented("take-over-catch-all", cfg.domain)) {
       throw needHuman(`${cfg.domain} 已有一条生效的兜底规则（${act?.type} → ${(act?.value || []).join(", ")}）`,
-        "接入会把它改成交给 MailHub，原来的转发会停止。确认可以接管后，我会加 --take-over-catch-all 继续。");
+        `接入会把它改成交给 ${n.inbox}，${catchAllImpact(act)}。确认可以接管后，我会加 --take-over-catch-all 继续。`);
     }
     try {
       await setCatchAllToWorker(zoneId, n.inbox);
@@ -518,7 +548,7 @@ async function stepPassword() {
   const opened = !flag("no-terminal") && openLoginTerminal();
   if (opened) log.info("已弹出一个终端窗口：请在里面设置登录密码（输入时不显示，不经过聊天）");
   else log.info(`请在你自己的终端里执行：${manual}`);
-  const waitMin = Number(opt("wait") || 8); // 多数 agent 工具单条命令上限 10 分钟
+  const waitMin = Math.min(Number(opt("wait") || 8), 8); // 多数 agent 工具单条命令上限 10 分钟
   const deadline = Date.now() + waitMin * 60_000;
   while (Date.now() < deadline) {
     await sleep(5000);
@@ -542,7 +572,7 @@ const STEPS = [
   ["deps", "安装依赖", stepDeps],
   ["login", "登录 Cloudflare", stepLogin],
   ["zone", "确认域名已由 Cloudflare 托管", stepZone],
-  ["preflight", "收信冲突检查", stepPreflight],
+  ["preflight", "冲突检查：邮箱 / 兜底规则 / 网址 / 同名 Worker", stepPreflight],
   ["d1", "数据库", stepD1],
   ["r2", "附件存储（可选）", stepR2],
   ["configs", "生成部署配置与密钥", stepConfigs],
@@ -570,33 +600,115 @@ function printPlan() {
   console.log(`步骤：${STEPS.map(([k]) => k).join(" → ")}`);
 }
 
+/** 跑一步并记账：成功记完成时间，失败记是哪一步、为什么 —— `status` 靠它向用户报告现状。 */
+async function runStep([key, title, fn]) {
+  log.step(key, title);
+  try {
+    await fn();
+  } catch (err) {
+    const { done = {} } = loadState();
+    delete done[key]; // 这一步现在是失败的：旧的「已完成」记录不再代表现状
+    saveState({ done, last_error: { step: key, code: err.code ?? EXIT.FAIL, message: String(err.message).slice(0, 400), at: new Date().toISOString() } });
+    throw err;
+  }
+  const st = loadState();
+  saveState({ last_step: key, done: { ...(st.done || {}), [key]: new Date().toISOString() },
+    ...(st.last_error?.step === key && { last_error: null }) });
+}
+
+/**
+ * 记为完成：当场重跑 10 项验收（不信旧记录），并到数据接口里查到用户发的测试信 ——
+ * 「收到测试信」要有证据，不只凭一句「收到了」。
+ */
+async function confirmDone() {
+  const cfg = loadConfig();
+  log.step("confirm", "确认完成");
+  if (!(await runChecks({ print: true }))) {
+    const { done = {} } = loadState();
+    delete done.verify;
+    saveState({ done });
+    throw new StepError("机器验收没有全部通过，不能记为完成", { next: "按上表失败项处理后重跑 verify" });
+  }
+  const address = (opt("mail") || `test@${cfg.domain}`).toLowerCase();
+  const vars = readDevVars();
+  let found = [];
+  try {
+    const res = await fetchx(`https://${cfg.api_host}/admin/mails?address=${encodeURIComponent(address)}&limit=1`,
+      { headers: { "x-admin-auth": vars.CFMAIL_ADMIN_TOKEN || "" } });
+    found = res.ok ? ((await res.json()).results || []) : [];
+  } catch { found = []; }
+  if (!found.length) {
+    throw needHuman(`还没查到发给 ${address} 的邮件`,
+      `请用你自己的 Gmail / QQ 等邮箱发一封信到 ${address}，一分钟后再确认。\n` +
+      `如果你发到了别的地址，告诉我那个地址，我会用 --mail <地址> 查。`);
+  }
+  const { done = {} } = loadState();
+  saveState({ done: { ...done, verify: new Date().toISOString() }, user_confirmed: new Date().toISOString(), test_mail: { address, received_at: found[0].received_at || null } });
+  log.ok(`已查到发给 ${address} 的测试信；已记录用户确认。搭建任务完成。`);
+}
+
+/** 现状报告：每步是否完成、卡在哪、下一步跑什么、是否已达成完成标准。 */
+function printStatus() {
+  const cfgRaw = readJson(path.join(STATE_DIR, "config.json"));
+  const st = loadState();
+  const done = st.done || {};
+  const next = STEPS.find(([k]) => !done[k])?.[0] || null;
+  const finished = Boolean(done.verify && st.user_confirmed);
+  if (flag("json")) {
+    console.log(JSON.stringify({ configured: Boolean(cfgRaw), config: cfgRaw, done, next_step: next,
+      last_error: st.last_error || null, user_confirmed: st.user_confirmed || null, finished }, null, 2));
+    return;
+  }
+  if (!cfgRaw) {
+    console.log("还没有开始：先问询用户，再执行 init（见 SKILL.md 第 4 节）。");
+    return;
+  }
+  console.log(`域名 ${cfgRaw.domain}　登录网页 https://${cfgRaw.web_host}　数据接口 https://${cfgRaw.api_host}　登录名 ${cfgRaw.login_user}`);
+  for (const [key, title] of STEPS) {
+    const mark = done[key] ? "✅" : st.last_error?.step === key ? "❌" : "⬜";
+    console.log(`  ${mark} ${key.padEnd(13)} ${title}`);
+  }
+  if (st.last_error) console.log(`\n上次卡在「${st.last_error.step}」（退出码 ${st.last_error.code}）：${st.last_error.message.split("\n")[0]}`);
+  if (next) console.log(`\n下一步：node kit/scripts/setup.mjs ${next}`);
+  else if (!st.user_confirmed) console.log("\n机器验收已全部通过。还差用户本人确认三件事（见 SKILL.md 第 8 节），确认后执行：node kit/scripts/setup.mjs confirm");
+  console.log(finished ? `\n🎉 已完成：机器验收全绿，用户已于 ${st.user_confirmed} 确认可用。` : "\n⏳ 尚未完成。");
+}
+
 async function main() {
   const [cmd = "help"] = args;
   if (cmd === "init") return stepInit();
   if (cmd === "plan") return printPlan();
+  if (cmd === "status") return printStatus();
+  if (cmd === "wrangler") {
+    // 透传给 kit 自带的 wrangler，并自动带上已确认的 Cloudflare 账号（多账号时直接调用会报错）。
+    // 异步起子进程：像 `tail` 这种一直运行的命令，被停止时信号才能转发过去。
+    const accountId = loadState().account_id;
+    activeChild = spawn(process.execPath, [WRANGLER_JS, ...args.slice(1)], {
+      stdio: "inherit",
+      env: { ...process.env, WRANGLER_SEND_METRICS: "false", CI: "true", ...(accountId && { CLOUDFLARE_ACCOUNT_ID: accountId }) },
+    });
+    return new Promise((resolve) => activeChild.on("close", (code) => resolve(code ?? EXIT.FAIL)));
+  }
+  if (cmd === "confirm") return confirmDone();
   if (cmd === "all") {
     loadConfig();
     const from = opt("from");
     let started = !from;
-    for (const [key, title, fn] of STEPS) {
-      if (!started && key === from) started = true;
+    for (const step of STEPS) {
+      if (!started && step[0] === from) started = true;
       if (!started) continue;
-      log.step(key, title);
-      await fn();
-      saveState({ last_step: key });
+      await runStep(step);
     }
-    console.log("\n🎉 全部完成。");
+    console.log("\n🎉 机器验收全部通过。接下来请用户本人确认三件事（SKILL.md 第 8 节）。");
     return;
   }
   const step = STEPS.find(([k]) => k === cmd);
   if (!step) {
-    console.log("用法：node kit/scripts/setup.mjs init|plan|all|<步骤>\n步骤：" + STEPS.map(([k]) => k).join(", "));
+    console.log("用法：node kit/scripts/setup.mjs init|plan|status|all|confirm|<步骤>\n步骤：" + STEPS.map(([k]) => k).join(", "));
     return EXIT.BAD_INPUT;
   }
   if (cmd !== "deps") loadConfig();
-  log.step(step[0], step[1]);
-  await step[2]();
-  saveState({ last_step: step[0] });
+  await runStep(step);
 }
 
 try {
