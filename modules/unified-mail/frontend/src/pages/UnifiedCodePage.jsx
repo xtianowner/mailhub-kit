@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle, ChevronRight, Cloud, ExternalLink, KeyRound, Mailbox, RadioTower, Search, X,
 } from 'lucide-react'
-import { hubApi } from '../lib/hubApi.js'
+import { hubApi, IS_CLOUD } from '../lib/hubApi.js'
 import { fmtDateTime } from '../lib/format.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
@@ -101,7 +101,10 @@ export default function UnifiedCodePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
-      <PageHeader title={t('code.title')} subtitle={t('code.subtitle')} />
+      <PageHeader
+        title={t('code.title')}
+        subtitle={t(IS_CLOUD ? 'code.subtitle.cloud' : 'code.subtitle')}
+      />
 
       <Card className="flex flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5">
         <form onSubmit={onSubmit} className="flex flex-col gap-3">
@@ -117,8 +120,8 @@ export default function UnifiedCodePage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   onBlur={() => setTouched(true)}
-                  placeholder={t('code.input.placeholder')}
-                  aria-label={t('code.input.placeholder')}
+                  placeholder={t(IS_CLOUD ? 'code.input.placeholder.cloud' : 'code.input.placeholder')}
+                  aria-label={t(IS_CLOUD ? 'code.input.placeholder.cloud' : 'code.input.placeholder')}
                   aria-invalid={invalid || undefined}
                   autoComplete="off"
                   spellCheck={false}
@@ -143,10 +146,13 @@ export default function UnifiedCodePage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-subtle">{t('code.routed')}</span>
-              <SourceFilter value={source} onPick={setSource} />
-            </div>
+            {/* 云端版只有域名邮箱一个来源，「判定来源」无可选项，整组不出现 */}
+            {!IS_CLOUD && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-subtle">{t('code.routed')}</span>
+                <SourceFilter value={source} onPick={setSource} />
+              </div>
+            )}
             <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-muted">
               <input
                 type="checkbox"
@@ -224,20 +230,39 @@ function RoutingExplainer({ t }) {
       .catch(() => setSuffixes([]))
   }, [])
 
-  const rules = [
-    {
-      icon: Cloud,
-      tone: 'text-accent',
-      text: t('code.how.domain', {
-        suffixes: suffixes.length ? suffixes.map((s) => `@${s}`).join(' / ') : '域名白名单',
-      }),
-    },
-    { icon: Mailbox, tone: 'text-info', text: t('code.how.hotmail') },
-  ]
+  // 云端版只有域名邮箱一条链路，没有「判定」可讲：改成讲清可用后缀 + 取的是哪封信。
+  // 拿不到后缀时那一行直接不显示，不拿占位词凑数。
+  const rules = IS_CLOUD
+    ? [
+        ...(suffixes.length
+          ? [
+              {
+                icon: Cloud,
+                tone: 'text-accent',
+                text: t('code.how.domain.cloud', {
+                  suffixes: suffixes.map((s) => `@${s}`).join(' / '),
+                }),
+              },
+            ]
+          : []),
+        { icon: KeyRound, tone: 'text-accent', text: t('code.how.latest.cloud') },
+      ]
+    : [
+        {
+          icon: Cloud,
+          tone: 'text-accent',
+          text: t('code.how.domain', {
+            suffixes: suffixes.length ? suffixes.map((s) => `@${s}`).join(' / ') : '域名白名单',
+          }),
+        },
+        { icon: Mailbox, tone: 'text-info', text: t('code.how.hotmail') },
+      ]
 
   return (
     <Card className="flex flex-col gap-3 px-4 py-4 sm:px-5">
-      <h2 className="font-heading text-sm font-semibold text-text">{t('code.how.title')}</h2>
+      <h2 className="font-heading text-sm font-semibold text-text">
+        {t(IS_CLOUD ? 'code.how.title.cloud' : 'code.how.title')}
+      </h2>
       <ul className="flex flex-col gap-2.5">
         {rules.map(({ icon: Icon, tone, text }, i) => (
           <li key={i} className="flex items-start gap-2.5 text-sm text-muted">
@@ -246,7 +271,9 @@ function RoutingExplainer({ t }) {
           </li>
         ))}
       </ul>
-      <p className="border-t border-border/50 pt-3 text-xs text-subtle">{t('code.how.hint')}</p>
+      <p className="border-t border-border/50 pt-3 text-xs text-subtle">
+        {t(IS_CLOUD ? 'code.how.hint.cloud' : 'code.how.hint')}
+      </p>
     </Card>
   )
 }

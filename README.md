@@ -1,14 +1,32 @@
-<!-- purpose: MailHub Kit 对外说明：是什么、要准备什么、怎么交给 AI 一次搭好、日常怎么用。 -->
+<!-- purpose: MailHub Kit 对外说明：是什么、效果截图、要准备什么、怎么交给 AI 一次搭好、日常怎么用。 -->
 
 # MailHub Kit
 
-在你自己的 Cloudflare 免费账号上搭一套**自己的域名邮箱**：
+**把这个仓库交给你的 AI 编程工具（Claude Code / Codex / Hermes），它会在你自己的 Cloudflare 免费账号上，从零搭好一套域名邮箱，搭到你亲自确认能用为止。**
+
+![统一收件箱](kit/docs/screenshots/01-inbox.png)
+
+你会得到：
 
 - ☁️ **云端登录网页**：比如 `https://mail.你的域名`，手机、电脑随时登录收信，账号密码保护。
 - 💻 **本地版**：本机一条命令启动同一个网页，只允许本机访问，免登录。
 - 📮 **任意前缀收信**：`任意名字@你的域名` 都能收到信，第一次来信自动建信箱，并自动提取验证码。
 
 不用买服务器，不用维护邮件服务器，Cloudflare 免费额度内零成本。
+
+## 搭好之后长这样
+
+> 截图用的是示例数据（`example.org` 下的虚构信箱与邮件）。界面和你搭好后看到的一致。
+
+| 一键接码：填地址，取最新验证码 | 域名邮箱：新建、备注、分组、看信 |
+|---|---|
+| ![接码](kit/docs/screenshots/02-code.png) | ![域名邮箱](kit/docs/screenshots/03-mailboxes.png) |
+| **邮件详情：验证码置顶，点击即复制** | **总览：信箱数、最新动态** |
+| ![邮件详情](kit/docs/screenshots/04-message.png) | ![总览](kit/docs/screenshots/05-overview.png) |
+| **云端登录页：账号密码保护** | **深色模式** |
+| ![登录](kit/docs/screenshots/06-login.png) | ![深色模式](kit/docs/screenshots/07-inbox-dark.png) |
+
+<p align="center"><img src="kit/docs/screenshots/08-mobile.png" alt="手机上的收件箱" width="300"><br><sub>手机上同样好用</sub></p>
 
 ## 你需要准备
 
@@ -18,9 +36,11 @@
 
 ## 怎么用：交给你的 AI，一句话搞定
 
-把这个项目（文件夹或压缩包）交给你的 AI 工具，然后发这一句：
+打开你的 AI 编程工具，发这一句：
 
-> 请阅读 mailhub-kit 里的 AGENTS.md，按它帮我搭建域名邮箱。
+> 请阅读 https://github.com/xtianowner/mailhub-kit 里的 AGENTS.md，按它帮我搭建域名邮箱。
+
+AI 会自己把项目下载到 `~/mailhub-kit`。如果你已经下载或克隆过这个仓库，就把那句话里的网址换成本地文件夹。
 
 AI 会先把自己注册成 `mailhub-setup` 技能，然后**一次性问你几个问题**：域名、登录网页地址、登录用户名等，接着自动完成全部搭建。
 
@@ -99,7 +119,7 @@ node kit/scripts/verify.mjs                 # 全链路验收
 ## 开发者自测
 
 ```bash
-cd kit && npm ci && npm test && cd ..      # 单元测试
+cd kit && npm ci && npm test && cd ..      # 单元测试 + 离线编排测试 + 契约测试
 node kit/tests/e2e-local.mjs               # 离线全链路：本地模拟收信 → 数据库 → 接口 → 本地网页
 ```
 

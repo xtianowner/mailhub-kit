@@ -54,7 +54,7 @@ node kit/scripts/setup.mjs status
 
 ## 3. 找到项目、补齐环境（对用户透明，不打扰）
 
-1. 项目根不存在时：把用户给的压缩包解压，或把仓库克隆到项目根。
+1. 项目根不存在时：执行 `git clone https://github.com/xtianowner/mailhub-kit.git <项目根>`；没有 git 就下载 https://github.com/xtianowner/mailhub-kit/archive/refs/heads/main.zip，解压后把文件夹改名为 `mailhub-kit`；用户直接给了压缩包，就解压到项目根。
 2. 运行 `node -v`。没有 Node，或主版本低于 22，就帮用户安装 Node.js 22 LTS：
    - macOS：从 https://nodejs.org 下载 LTS 版 .pkg 安装。或者有 Homebrew 时执行 `brew install node@22 && brew link --overwrite --force node@22`，这会替换用户原有的 node 链接，事后要告诉用户。
    - Windows：`winget install OpenJS.NodeJS.LTS`，装完新开一个终端。

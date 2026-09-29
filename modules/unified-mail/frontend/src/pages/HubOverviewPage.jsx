@@ -90,7 +90,7 @@ export default function HubOverviewPage() {
         {listState !== 'ready' ? (
           <StateBlock state={listState} onRetry={load} />
         ) : recent.length === 0 ? (
-          <StateBlock state="empty" message={t('inbox.empty')} />
+          <StateBlock state="empty" message={t(IS_CLOUD ? 'inbox.empty.cloud' : 'inbox.empty')} />
         ) : (
           <ul className="divide-y divide-border/50">
             {recent.map((m) => (

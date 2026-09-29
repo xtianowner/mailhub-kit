@@ -2492,7 +2492,14 @@ if (request.method === "GET" && url.pathname === "/admin/mailboxes") {
     `SELECT mb.id, mb.email, mb.domain, mb.subdomain, mb.local_part,
             mb.status, mb.created_at, mb.fingerprint, mb.label, mb.group_name,
             COUNT(m.id)        AS message_count,
-            MAX(m.received_at) AS last_mail_at
+            MAX(m.received_at) AS last_mail_at,
+            -- 最近一封带验证码的信：列表里直接展示，不用逐个点「接码」（走 mailbox_id+received_at 索引）
+            (SELECT c.code FROM messages c
+              WHERE c.mailbox_id = mb.id AND c.code IS NOT NULL AND c.code != ''
+              ORDER BY c.received_at DESC LIMIT 1) AS last_code,
+            (SELECT c.received_at FROM messages c
+              WHERE c.mailbox_id = mb.id AND c.code IS NOT NULL AND c.code != ''
+              ORDER BY c.received_at DESC LIMIT 1) AS last_code_at
        FROM mailboxes mb
        LEFT JOIN messages m ON m.mailbox_id = mb.id
        ${where}
@@ -2516,6 +2523,8 @@ if (request.method === "GET" && url.pathname === "/admin/mailboxes") {
     group: r.group_name || null,
     message_count: Number(r.message_count || 0),
     last_mail_at: r.last_mail_at || null,
+    last_code: r.last_code || null,
+    last_code_at: r.last_code_at || null,
   }));
 
   const totalRow = await env.DB.prepare(

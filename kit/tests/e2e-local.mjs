@@ -121,6 +121,9 @@ try {
   check(Boolean(found), "数据接口查到这封信");
   check(found?.mailbox_email === `hello@${DOMAIN}`, "按收件人自动建信箱", `mailbox_email=${found?.mailbox_email}`);
   check(found?.code === "482913", "验证码提取", `code=${found?.code}`);
+  const boxes = await (await fetch(`http://127.0.0.1:${API_PORT}/admin/mailboxes`, { headers: { "x-admin-auth": ADMIN } })).json();
+  const box = (boxes.results || []).find((b) => b.email === `hello@${DOMAIN}`);
+  check(box?.last_code === "482913", "信箱列表带出最近验证码", `last_code=${box?.last_code}`);
   const unauth = await fetch(`http://127.0.0.1:${API_PORT}/admin/messages/recent`);
   check(unauth.status === 401, "数据接口无密钥拒绝访问", `HTTP ${unauth.status}`);
 
