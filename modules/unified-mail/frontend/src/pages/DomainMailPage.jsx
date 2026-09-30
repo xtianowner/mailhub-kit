@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, Copy, Info, KeyRound, MailPlus, Plus, Search, Trash2 } from 'lucide-react'
-import { hubApi } from '../lib/hubApi.js'
+import { hubApi, IS_CLOUD } from '../lib/hubApi.js'
 import { fmtDateTime, fmtRelative } from '../lib/format.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
@@ -13,9 +13,8 @@ import { MailboxMetaDialog } from '../components/MailboxMetaDialog.jsx'
 import { useCopy } from '../lib/useCopy.js'
 
 // 域名邮箱页：管自有域名上的信箱。
-// 新版 Worker（带 /admin/mailboxes）下，这张表以**线上真实存在的信箱**为准，
-// 本地只保存用户写的备注/分组，零遗漏；旧版 Worker 下退化成「只能显示手动登记过的」，
-// 此时页面会显式警告会漏信，而不是假装看到的就是全部。
+// Worker 提供 /admin/mailboxes 时，这张表以**线上真实存在的信箱**为准，
+// 本地只保存用户写的备注/分组；如果接口不可用，页面只显示手动登记过的地址并明确提示范围。
 export default function DomainMailPage() {
   const { t, locale } = useLocale()
   const toast = useToast()
@@ -88,6 +87,20 @@ export default function DomainMailPage() {
     }
   }
 
+  const onRegister = async (row) => {
+    setRowBusy((m) => ({ ...m, [row.email]: 'register' }))
+    try {
+      const at = row.email.lastIndexOf('@')
+      await hubApi.createMailbox({ name: row.email.slice(0, at), domain: row.email.slice(at + 1) })
+      toast.success(t('dom.registered'))
+      await load()
+    } catch (err) {
+      toast.error(err?.userMessage || t('common.error'))
+    } finally {
+      setRowBusy((m) => ({ ...m, [row.email]: undefined }))
+    }
+  }
+
   const onRemove = async (row) => {
     if (!window.confirm(`${t('dom.remove.confirm')}\n${row.email}`)) return
     setRowBusy((m) => ({ ...m, [row.email]: 'remove' }))
@@ -107,6 +120,11 @@ export default function DomainMailPage() {
       current.map((row) => (row.email === next.email ? { ...row, ...next } : row)),
     )
   }
+
+  // 云端「收信自动建」的行多一个「登记」按钮。table-fixed 下列宽不随内容变，
+  // 按钮组会向左溢出盖住「最近验证码」列 —— 有这种行时按中/英文按钮组实宽（含加载转圈）加宽操作列。
+  const showRegister = IS_CLOUD && rows.some((r) => r.status === 'auto')
+  const actionsColW = showRegister ? (locale === 'en' ? 'w-[368px]' : 'w-[280px]') : 'w-[176px]'
 
   return (
     <div className="flex flex-col gap-5">
@@ -190,7 +208,7 @@ export default function DomainMailPage() {
                   <th className="px-2 py-2.5 align-middle">{t('dom.col.label')}</th>
                   <th className="w-[110px] px-2 py-2.5 align-middle">{t('dom.col.lastMail')}</th>
                   <th className="w-[132px] px-2 py-2.5 align-middle">{t('dom.col.lastCode')}</th>
-                  <th className="w-[176px] px-4 py-2.5 text-right align-middle">
+                  <th className={`${actionsColW} px-4 py-2.5 text-right align-middle`}>
                     {t('table.actions') !== 'table.actions' ? t('table.actions') : ''}
                   </th>
                 </tr>
@@ -272,6 +290,12 @@ export default function DomainMailPage() {
                       </td>
                       <td className="px-4 py-2.5 align-middle">
                         <div className="flex items-center justify-end gap-1.5">
+                          {IS_CLOUD && r.status === 'auto' && (
+                            <Button size="sm" variant="ghost" loading={rowBusy[r.email] === 'register'}
+                              onClick={(event) => { event.stopPropagation(); onRegister(r) }}>
+                              <MailPlus size={13} />{t('dom.register')}
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="solid"

@@ -19,6 +19,15 @@
   // 关掉 workers.dev 预览地址：主域名之外不需要第二个公开入口。
   "workers_dev": false,
 
+  // 与 mail-api 共用同一个 D1：登录限速计数存在这里。部署前先执行迁移 0003，
+  // 否则登录接口会返回 503（限速表不存在时一律拒绝登录，已登录的会话不受影响）。
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "mailhub-db",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "../../cfmail-worker/migrations"
+  }],
+
   "assets": {
     "directory": "../frontend/dist-cloud",
     "binding": "ASSETS",

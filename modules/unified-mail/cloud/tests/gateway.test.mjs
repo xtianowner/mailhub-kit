@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import gateway from "../src/index.js";
+import { createTestD1 } from "../../../../kit/tests/helpers/sqlite-d1.mjs";
 
 const CFMAIL = { CFMAIL_ADMIN_TOKEN: "admin-test", CFMAIL_SITE_PASSWORD: "site-test",
                  CFMAIL_BASE_URL: "https://api-mail.example.com" };
@@ -10,7 +11,7 @@ const LOGIN = { APP_USER: "Me@Example.com", APP_PASSWORD: "pw-Test 1", SESSION_S
 const ASSETS = { fetch: async () => new Response("<html>spa</html>", { status: 200 }) };
 
 function withUpstream(fn) {
-  return async () => {
+  return async (t) => {
     const seen = [];
     const original = globalThis.fetch;
     globalThis.fetch = async (url, init) => {
@@ -18,7 +19,7 @@ function withUpstream(fn) {
       return new Response(JSON.stringify({ ok: true, domains: ["example.com"] }),
                           { status: 200, headers: { "content-type": "application/json" } });
     };
-    try { await fn(seen); } finally { globalThis.fetch = original; }
+    try { await fn(seen, t); } finally { globalThis.fetch = original; }
   };
 }
 
@@ -70,8 +71,8 @@ test("本地：开关打开但缺 CFMAIL 密钥时报未配置", async () => {
   assert.equal(res.status, 503);
 });
 
-test("线上登录：用户名忽略大小写，密码区分大小写，登录后可访问数据", withUpstream(async (seen) => {
-  const env = { ...CFMAIL, ...LOGIN };
+test("线上登录：用户名忽略大小写，密码区分大小写，登录后可访问数据", withUpstream(async (seen, t) => {
+  const env = { ...CFMAIL, ...LOGIN, DB: createTestD1(t) };
   const bad = await call("https://mail.example.com/auth/login", env, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ username: "me@example.com", password: "PW-test 1" }),
@@ -88,6 +89,21 @@ test("线上登录：用户名忽略大小写，密码区分大小写，登录�
   const res = await call("https://mail.example.com/admin/domains", env, { headers: { Cookie: cookie } });
   assert.equal(res.status, 200);
   assert.equal(seen.length, 1);
+
+  for (const headers of [
+    { Origin: "https://evil.example.com", "Sec-Fetch-Site": "same-site" },
+    { Origin: "https://evil.example.net" },
+  ]) {
+    const rejected = await call("https://mail.example.com/admin/settings/receiving", env, {
+      method: "POST", headers: { Cookie: cookie, ...headers }, body: '{"receive_mode":"auto"}',
+    });
+    assert.equal(rejected.status, 403, "another site cannot change receiving policy using a session");
+  }
+  assert.equal(seen.length, 1);
+  assert.equal((await call("https://mail.example.com/admin/settings/receiving", env, {
+    method: "POST", headers: { Cookie: cookie, Origin: "https://mail.example.com", "Sec-Fetch-Site": "same-origin" },
+    body: '{"receive_mode":"registered"}',
+  })).status, 200);
 }));
 
 test("非数据路径交给静态资源", async () => {

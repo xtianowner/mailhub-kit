@@ -60,7 +60,7 @@ export function reportError(err) {
   if (err instanceof StepError && err.code === EXIT.HUMAN) {
     console.log(`\n🙋 请你操作：${err.message}`);
     if (err.next) console.log(`   ${err.next.replace(/\n/g, "\n   ")}`);
-    console.log("\n   完成后重跑同一条命令即可，已完成的步骤会自动跳过。");
+    console.log("\n   完成后重跑同一步即可；已有资源会复用，status 可查看下一步。");
     return EXIT.HUMAN;
   }
   const code = err instanceof StepError ? err.code : EXIT.FAIL;

@@ -6,4 +6,7 @@ start.sh
 stop.sh
 start.cmd
 stop.cmd
+mailhub.cmd
 .gitattributes
+docs/github-update.md
+.github/workflows/test.yml

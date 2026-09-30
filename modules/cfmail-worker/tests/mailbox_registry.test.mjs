@@ -53,7 +53,7 @@ test("已存在的信箱直接返回其 id，不重复创建", async () => {
   assert.equal(env.inserts.length, 0);
 });
 
-test("未知地址会自动建信箱（这是本次修复的核心）", async () => {
+test("未知地址会自动建信箱", async () => {
   const env = makeEnv();
   const id = await ensureMailboxId(env, "brand-new@example.com");
   assert.notEqual(id, FALLBACK_MAILBOX_ID, "不能再退回共用桶");

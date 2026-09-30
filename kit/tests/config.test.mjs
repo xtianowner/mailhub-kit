@@ -47,6 +47,7 @@ test("生成的配置：自定义域名、不开 workers.dev、不含任何密�
   for (const w of Object.values(c)) assert.equal(w.workers_dev, false, "workers.dev 在国内被封，且不需要第二个入口");
   assert.equal(c.web.vars.CFMAIL_BASE_URL, "https://api-mail.demo.test");
   assert.equal(c.api.vars.CORS_ORIGINS, "https://mail.demo.test");
+  assert.deepEqual(c.web.d1_databases, c.api.d1_databases, "login limits share the persistent database");
   const text = JSON.stringify(c);
   for (const k of ["ADMIN_TOKEN", "SITE_PASSWORD", "APP_PASSWORD", "SESSION_SECRET"]) {
     assert.ok(!text.includes(`"${k}"`), `${k} 不能出现在配置里`);

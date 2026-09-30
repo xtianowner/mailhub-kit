@@ -1,6 +1,6 @@
 // 离线编排测试：用假 wrangler + 本地假服务扮演 Cloudflare，跑真实的 setup.mjs。
 // 覆盖：需要用户操作时停下（退出码 10）；查不到就停、不猜；不静默接管用户已有的邮箱 / 网址 / Worker；
-// 密钥只经临时 600 文件且用完即删、不进命令参数；重跑幂等；最终验收 10 项全绿；
+// 密钥只经临时文件且用完即删、不进命令参数；重跑幂等；最终验收全绿；
 // 以及契约测试 —— 把安装器调用过的每条 wrangler 命令拿真 wrangler 重放，确认参数都过得了它的校验。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -9,8 +9,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = path.resolve(KIT, "..");
 const REAL_WRANGLER = path.join(KIT, "node_modules", "wrangler", "bin", "wrangler.js");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "mailhub-orch-"));
@@ -64,6 +65,20 @@ const server = http.createServer(async (req, res) => {
     return send(200, { Status: 0, Answer: data.map((d) => ({ type: code, data: d })) });
   }
   if (p === "/api-host/") return send(200, { ok: true, domains: 1 });
+  if (p === "/api-host/admin/settings/receiving") {
+    if (!api.ADMIN_TOKEN || req.headers["x-admin-auth"] !== api.ADMIN_TOKEN) return send(401, { ok: false });
+    return send(200, { receive_mode: w.receiveMode ?? "registered" });
+  }
+  if (p === "/api-host/admin/mailboxes" || p === "/api-host/admin/new_address") {
+    if (!api.ADMIN_TOKEN || req.headers["x-admin-auth"] !== api.ADMIN_TOKEN) return send(401, { ok: false });
+    if (req.method === "GET") return send(200, { results: w.testBoxes || [] });
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const { name, domain } = JSON.parse(body);
+    const box = { id: "test-box", email: `${name}@${domain}`, status: "active", fingerprint: null };
+    patch({ testBoxes: [box] });
+    return send(200, box);
+  }
   if (p === "/api-host/admin/mails") {
     if (req.headers["x-admin-auth"] !== api.ADMIN_TOKEN) return send(401, { ok: false });
     return send(200, { results: (w.testMails || {})[url.searchParams.get("address")] || [] });
@@ -99,11 +114,12 @@ Object.assign(env, {
 
 // 必须异步起子进程：假服务跑在本进程里，同步等待会把它卡死。
 function runAsync(args, { input, extraEnv } = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, { cwd: ROOT, env: { ...env, ...extraEnv } });
     let out = "";
     child.stdout.on("data", (d) => { out += d; });
     child.stderr.on("data", (d) => { out += d; });
+    child.on("error", reject);
     child.on("close", (code) => resolve({ code, out }));
     child.stdin.end(input ?? "");
   });
@@ -139,6 +155,13 @@ test("令牌缺 Email Routing 权限 → 自动重新授权", async () => {
   assert.equal(again.code, 0, again.out);
   assert.ok(world().calls.filter((c) => c[0] === "login").length > before, "应重新登录");
   assert.ok(world().tokenPermissions.includes("email_routing:write"));
+});
+
+test("授权已完成时忽略旧页面错误，不重新发起设备登录", async () => {
+  const before = world().calls.filter((c) => c[0] === "login").length;
+  const r = await setup("login", "--device");
+  assert.equal(r.code, 0, r.out);
+  assert.equal(world().calls.filter((c) => c[0] === "login").length, before);
 });
 
 test("域名不在账号里 → 退出码 10，并告诉用户去哪添加", async () => {
@@ -202,7 +225,7 @@ test("网址已被占用 → 一次列出全部冲突；同意只对点名的地
   patch({ workerDomains: [] });
 });
 
-test("账号里已有同名 Worker → 停下；用户确认是自己以前建的才复用", async () => {
+test("账号里已有同名 Worker → 停下；用户确认属于本套件后复用", async () => {
   patch({ scripts: ["mailhub-web"] });
   const r = await setup("preflight");
   assert.equal(r.code, 10, r.out);
@@ -224,12 +247,17 @@ test("全流程跑到「设置密码」停下（退出码 10）；密钥只经�
   const byWorker = Object.fromEntries(w.deploys.map((d) => [d.worker, d]));
   assert.deepEqual(byWorker["mailhub-api"].secretNames.sort(), ["ADMIN_TOKEN", "SITE_PASSWORD"]);
   assert.deepEqual(byWorker["mailhub-web"].secretNames.sort(), ["APP_USER", "CFMAIL_ADMIN_TOKEN", "CFMAIL_SITE_PASSWORD", "SESSION_SECRET"]);
-  for (const d of w.deploys.filter((x) => x.secretsFileMode)) assert.equal(d.secretsFileMode, "600");
+  // Windows exposes synthetic mode bits; owner-only POSIX modes apply on Unix.
+  if (process.platform !== "win32") {
+    for (const d of w.deploys.filter((x) => x.secretsFileMode)) assert.equal(d.secretsFileMode, "600");
+  }
   assert.equal(w.secrets["mailhub-web"].CFMAIL_ADMIN_TOKEN, w.secrets["mailhub-api"].ADMIN_TOKEN, "两端密钥必须一致");
 
   const gen = path.join(STATE_DIR, "generated");
   assert.deepEqual(fs.readdirSync(gen).filter((f) => f.startsWith(".secrets-")), [], "临时密钥文件（含上次残留）必须删除");
-  assert.equal(fs.statSync(path.join(gen, ".dev.vars")).mode & 0o777, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(path.join(gen, ".dev.vars")).mode & 0o777, 0o600);
+  }
 
   const argvText = JSON.stringify(w.calls);
   for (const v of [...Object.values(w.secrets["mailhub-api"]), w.secrets["mailhub-web"].SESSION_SECRET]) {
@@ -241,7 +269,19 @@ test("全流程跑到「设置密码」停下（退出码 10）；密钥只经�
   assert.deepEqual(w.catchAll, { enabled: true, actions: [{ type: "worker", value: ["mailhub-inbox"] }] });
 });
 
-test("用户设好密码后续跑：验收 10 项全绿，并输出交付信息", async () => {
+test("单独重跑 configs 更新失效的 Node 路径，不需要重跑建库", async () => {
+  const runtimeFile = path.join(STATE_DIR, "runtime.json");
+  fs.writeFileSync(runtimeFile, JSON.stringify({ execPath: path.join(TMP, "removed-node.exe"), version: "v0.0.0" }));
+  const callsBefore = world().calls.length;
+  const r = await setup("configs");
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(JSON.parse(fs.readFileSync(runtimeFile, "utf8")), {
+    execPath: process.execPath, version: process.version,
+  });
+  assert.equal(world().calls.length, callsBefore, "更新运行时无需请求 Cloudflare");
+});
+
+test("用户设好密码后续跑：验收全部通过，并输出交付信息", async () => {
   const put = await fake(["secret", "put", "APP_PASSWORD", "-c", path.join(STATE_DIR, "generated", "wrangler.web.json")], "user-chosen-pw");
   assert.equal(put.code, 0);
   const r = await setup("all", "--from", "password", "--no-terminal");
@@ -249,6 +289,23 @@ test("用户设好密码后续跑：验收 10 项全绿，并输出交付信息"
   assert.doesNotMatch(r.out, /❌/);
   assert.match(r.out, /云端登录网页：https:\/\/mail\.demo\.test/);
   assert.match(r.out, /本地版：http:\/\/127\.0\.0\.1:18890/);
+  assert.equal(world().testBoxes[0].email, `test@${DOMAIN}`, "验收前必须登记测试地址");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(STATE_DIR, "runtime.json"), "utf8")).execPath, process.execPath);
+});
+
+test("不存在的续跑步骤不能跳过检查后报告成功", async () => {
+  const r = await setup("all", "--from", "typo-step");
+  assert.equal(r.code, 2, r.out);
+  assert.doesNotMatch(r.out, /机器验收全部通过/);
+});
+
+test("验收拒绝未知收信模式，不把旧部署误判为安全配置完整", async () => {
+  patch({ receiveMode: "broken-mode" });
+  const r = await setup("verify");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /broken-mode/);
+  patch({ receiveMode: "registered" });
+  assert.equal((await setup("verify")).code, 0);
 });
 
 test("重跑幂等：自己建的网址与 Worker 不算冲突；不重复建库、不重置会话密钥、不动用户密码", async () => {

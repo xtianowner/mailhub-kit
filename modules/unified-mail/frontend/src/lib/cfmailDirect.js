@@ -11,11 +11,12 @@
 // 输出形状与本地版 hubApi 对齐，页面组件两个目标通用。
 
 export class CfError extends Error {
-  constructor(message, status, kind) {
+  constructor(message, status, kind, retryAfter = 0) {
     super(message)
     this.name = 'CfError'
     this.status = status
     this.kind = kind || (status === 401 ? 'unauthorized' : 'other')
+    this.retryAfter = retryAfter
   }
 
   get userMessage() {
@@ -50,12 +51,17 @@ async function call(path, { params = {}, method = 'GET', body } = {}) {
   }
   if (!res.ok) {
     let detail = ''
+    let code = ''
+    let retryAfter = Number(res.headers.get('retry-after')) || 0
     try {
-      detail = (await res.json())?.error || ''
+      const error = await res.json()
+      detail = error?.error || ''
+      code = error?.code || ''
+      retryAfter = Number(error?.retry_after) || retryAfter
     } catch {
       /* 非 JSON 错误体 */
     }
-    throw new CfError(detail, res.status)
+    throw new CfError(detail, res.status, code || undefined, retryAfter)
   }
   return res.json()
 }
@@ -111,6 +117,9 @@ export const cloudAuth = {
 
 /* ── 与本地版 hubApi 同名的数据接口 ───────────────────────── */
 export const cfApi = {
+  receivingSettings: () => call('/admin/settings/receiving'),
+  saveReceivingSettings: (receive_mode) =>
+    call('/admin/settings/receiving', { method: 'POST', body: { receive_mode } }),
   async health() {
     try {
       const d = await call('/admin/domains')

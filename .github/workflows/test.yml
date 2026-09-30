@@ -1,0 +1,34 @@
+name: MailHub regression
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            kit/package-lock.json
+            modules/cfmail-worker/package-lock.json
+            modules/unified-mail/frontend/package-lock.json
+      - run: node kit/scripts/setup.mjs deps
+      - run: npm --prefix kit test
+      - run: node --test modules/cfmail-worker/tests/*.test.mjs modules/unified-mail/cloud/tests/*.test.mjs
+      - run: node kit/scripts/setup.mjs build
+      - run: node kit/tests/e2e-local.mjs

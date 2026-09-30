@@ -1,7 +1,6 @@
 // 直贴版（真正部署到 Cloudflare 的那一份）冒烟测试。
 //
-// 为什么需要它：`node --check` 只验语法，**抓不到未定义符号**——本次就漏过一次
-// （删代码时误删了 extractLink，--check 照样通过）。而 email handler 内部包了
+// 为什么需要它：`node --check` 只验语法，**抓不到未定义符号**。email handler 内部包了
 // try/catch，ReferenceError 会被静默吞掉、只打一行日志，线上表现为「信悄悄丢了」。
 // 所以这里真调用一次 handler，并监听 console.log 确认没有 worker error。
 import test from "node:test";
@@ -40,6 +39,7 @@ function makeEnv({ mailboxes = [], domains = ["example.com"] } = {}) {
           _b: [],
           bind(...a) { this._b = a; return this; },
           async first() {
+            if (sql.includes("FROM mail_settings")) return { value: "auto" };
             if (sql.includes("FROM mailboxes")) {
               const e = String(this._b[0] || "").toLowerCase();
               return mailboxes.find((m) => m.email.toLowerCase() === e) || null;
@@ -98,7 +98,7 @@ test("发往未创建地址的信 → 自动建信箱，不再落进 inbox_test"
 
   assert.equal(env.messages.length, 1, "信必须照常入库");
   assert.equal(env.messages[0].mailbox_id, env.mailboxes[0].id);
-  assert.notEqual(env.messages[0].mailbox_id, "inbox_test", "这正是本次要根治的遗漏");
+  assert.notEqual(env.messages[0].mailbox_id, "inbox_test", "邮件不能落入共用兜底信箱");
 });
 
 test("验证码照常提取（自动建信箱没破坏原有能力）", async () => {

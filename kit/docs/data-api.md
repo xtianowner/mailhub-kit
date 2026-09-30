@@ -18,9 +18,11 @@
 | 方法 | 路径 | 参数 | 返回 / 用途 |
 |---|---|---|---|
 | GET | `/` | — | `{ok, domains}`，健康检查（免鉴权） |
+| GET | `/admin/settings/receiving` | — | `{ok, receive_mode}`，值为 `registered` 或 `auto` |
+| POST | `/admin/settings/receiving` | JSON `{receive_mode}` | 保存全局收信模式；云端、本地共同生效 |
 | GET | `/admin/domains` | — | 已启用收信的根域列表 |
 | GET | `/admin/mailboxes` | `q` `limit` `offset` | 全部信箱（含来信时自动创建的） |
-| POST | `/admin/new_address` | JSON `{name, domain}` | 新建信箱；不给 `name` 就随机生成 |
+| POST | `/admin/new_address` | JSON `{name, domain}` | 登记信箱；同地址补登记保留 ID 与邮件，不给 `name` 则随机生成 |
 | POST | `/admin/mailboxes/meta` | JSON `{email, label, group}` | 修改信箱的备注和分组 |
 | GET | `/admin/messages/recent` | `q` `limit` `offset` `only_codes=1` | 跨所有信箱、按时间倒序的邮件列表（不含完整正文） |
 | GET | `/admin/mails` | `address` `limit` `offset` | 某个信箱的邮件 |
@@ -35,3 +37,5 @@
 ```bash
 curl "https://api-mail.example.com/api/mailboxes/code?email=signup@example.com&password=$CFMAIL_SITE_PASSWORD"
 ```
+
+默认 `registered`：先登记再收信，未登记地址会拒收；`auto` 模式允许首次来信自动建箱。使用 `registered` 模式时，自动创建的地址需要调用 `/admin/new_address` 补登记，已有邮件保留。修改设置需管理员鉴权，不能从公开前端直接携带密钥调用。

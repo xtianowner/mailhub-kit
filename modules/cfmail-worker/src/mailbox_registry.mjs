@@ -11,7 +11,7 @@
 //    绝不能静默吞掉（吞掉 = 告诉 CF 已投递 = 这封信永久消失且零信号）。
 
 // 兜底桶：只有「自动建信箱」也失败时才用。落进这里的信收件人不可考，
-// 是最后防线而非常规路径（2026-07-27 之前它是常规路径）。
+// 它是最后防线，不是常规路径。
 export const FALLBACK_MAILBOX_ID = "inbox_test";
 
 // 标记自动发现的信箱，便于与 /admin/new_address 显式创建的区分、也便于日后清理。
@@ -54,7 +54,7 @@ async function enabledRootDomains(env) {
 /**
  * 拿到这封信该落的 mailbox_id；信箱不存在就**自动建一个**。
  *
- * 为什么必须这么做：以前信箱不存在时直接回退到共用桶 `inbox_test`，而 messages 表
+ * 为什么必须这么做：信箱不存在时如果直接回退到共用桶 `inbox_test`，而 messages 表
  * 没有 mail_to 列 —— 真实收件人就此永久丢失，`/api/mailboxes/code` 查这个地址也是
  * 404，等于「信收到了但接不了码，还不知道是发给谁的」。Catch-All 场景下这是系统性遗漏。
  *
@@ -194,7 +194,7 @@ export async function storeMessageSafely(env, m) {
  *
  * 为什么抽出来：src/mail-inbox.js 与 Dashboard 直贴版的**解析方式不同**
  * （前者 PostalMime 增强，后者只用自带 raw parser），但解析之后这段
- * 「选哪份正文、提码、提链接」的逻辑必须一模一样。以前它在两处各写一份，
+ * 「选哪份正文、提码、提链接」的逻辑必须一模一样。如果在两处各写一份，
  * 结果换 handler 时直贴版这份被漏掉 —— 引用了不存在的函数，靠 try/catch
  * 兜住降级，验证码悄悄全变成 null（测试才抓出来）。
  *

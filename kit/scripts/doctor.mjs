@@ -25,7 +25,8 @@ async function main() {
   const git = run(process.platform === "win32" ? "where" : "which", ["git"]);
   const proxySet = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"].some((k) => process.env[k]);
   const checks = [
-    { key: "node", ok: major >= MIN_NODE, detail: `v${process.versions.node}（需要 ≥ ${MIN_NODE}）`, fix: "安装 Node.js 22 LTS 或更新版本" },
+    { key: "node", ok: major >= MIN_NODE, detail: `v${process.versions.node}（需要 ≥ ${MIN_NODE}；推荐最新 22 / 24 LTS）`, fix: "安装官方 Node.js LTS，或使用项目便携运行时" },
+    { key: "runtime", ok: true, detail: `${process.platform}/${process.arch} ${process.execPath}` },
     { key: "deps", ok: depsReady, detail: depsReady ? "已安装" : "未安装", fix: "node kit/scripts/setup.mjs deps", blocking: false },
     { key: "wrangler", ok: fs.existsSync(WRANGLER_JS), detail: fs.existsSync(WRANGLER_JS) ? "kit 自带" : "随依赖安装", fix: "node kit/scripts/setup.mjs deps", blocking: false },
     { key: "npm_registry", ...(await reach("https://registry.npmjs.org/wrangler")), fix: "国内网络：安装依赖时加 --registry https://registry.npmmirror.com", blocking: false },
@@ -36,7 +37,7 @@ async function main() {
   ];
   const ready = checks.every((c) => c.ok || c.blocking === false);
   if (json) {
-    console.log(JSON.stringify({ ready, platform: process.platform, arch: process.arch, checks }, null, 2));
+    console.log(JSON.stringify({ ready, platform: process.platform, arch: process.arch, execPath: process.execPath, checks }, null, 2));
   } else {
     for (const c of checks) console.log(`${c.ok ? "✅" : c.blocking === false ? "⚠️ " : "❌"} ${c.key.padEnd(15)} ${c.detail}${c.ok ? "" : "　→ " + c.fix}`);
     console.log(ready ? "\n可以开始搭建。" : "\n先处理 ❌ 项。");

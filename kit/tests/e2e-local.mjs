@@ -8,9 +8,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import net from "node:net";
+import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 
-const KIT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = path.resolve(KIT, "..");
 const WRANGLER = path.join(KIT, "node_modules", "wrangler", "bin", "wrangler.js");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "mailhub-e2e-"));
@@ -19,9 +21,16 @@ const PERSIST = path.join(TMP, "d1");
 const DOMAIN = "demo-mail.test";
 const ADMIN = "a".repeat(64);
 const SITE = "b".repeat(64);
-const API_PORT = 18801;
-const INBOX_PORT = 18812;
-const env = { ...process.env, MAILHUB_STATE_DIR: STATE, WRANGLER_SEND_METRICS: "false", CI: "true" };
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+const API_PORT = await freePort();
+const INBOX_PORT = await freePort();
+const env = { ...process.env, MAILHUB_STATE_DIR: STATE, MAILHUB_LOCAL_PORT: String(await freePort()), WRANGLER_SEND_METRICS: "false", CI: "true" };
 
 const children = [];
 let failed = 0;
@@ -42,13 +51,14 @@ function background(args, name) {
   const log = fs.openSync(path.join(TMP, `${name}.log`), "a");
   const child = spawn(process.execPath, args, { cwd: path.join(STATE, "generated"), env, detached: true, stdio: ["ignore", log, log] });
   children.push(child);
+  fs.closeSync(log);
   return child;
 }
 
 async function waitFor(url, ok, seconds = 60) {
   for (let i = 0; i < seconds; i += 1) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
       if (await ok(res)) return true;
     } catch { /* 还没起来 */ }
     await new Promise((r) => setTimeout(r, 1000));
@@ -58,7 +68,11 @@ async function waitFor(url, ok, seconds = 60) {
 
 function cleanup() {
   for (const c of children) {
-    try { process.kill(-c.pid, "SIGTERM"); } catch { /* 已退出 */ }
+    if (process.platform === "win32") {
+      if (c.exitCode === null && c.pid) spawnSync("taskkill", ["/pid", String(c.pid), "/t", "/f"], { stdio: "ignore" });
+    } else {
+      try { process.kill(-c.pid, "SIGTERM"); } catch { /* 已退出 */ }
+    }
   }
   spawnSync(process.execPath, [path.join(KIT, "scripts", "local.mjs"), "stop"], { cwd: ROOT, env, stdio: "ignore" });
 }
@@ -79,22 +93,31 @@ try {
     `INSERT INTO domains (id, domain, enabled, fixed_subdomain, random_subdomains, created_at) VALUES ('d1','${DOMAIN}',1,NULL,'[]',datetime('now')) ON CONFLICT(domain) DO UPDATE SET enabled = 1`);
   const tables = JSON.parse(d1("execute", "mailhub-db", "--yes", "--json", "--command",
     "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))[0].results.map((r) => r.name);
-  check(["domains", "mailboxes", "message_attachments", "messages", "sent_messages"].every((t) => tables.includes(t)),
+  check(["domains", "mailboxes", "message_attachments", "messages", "sent_messages", "mail_settings", "login_rate_limits"].every((t) => tables.includes(t)),
     "建表 + 升级", tables.join(","));
   const cols = JSON.parse(d1("execute", "mailhub-db", "--yes", "--json", "--command", "PRAGMA table_info(mailboxes)"))[0].results.map((r) => r.name);
   check(cols.includes("label") && cols.includes("group_name"), "升级 0002 已生效（label / group_name）");
 
   // 3) 起本地数据接口与收信 Worker（共享同一个本地 D1）
   background([WRANGLER, "dev", "-c", gen("api"), "--ip", "127.0.0.1", "--port", String(API_PORT),
-    "--persist-to", PERSIST, "--inspector-port", "19431", "--var", `ADMIN_TOKEN:${ADMIN}`, "--var", `SITE_PASSWORD:${SITE}`,
+    "--persist-to", PERSIST, "--inspector-port", String(await freePort()), "--var", `ADMIN_TOKEN:${ADMIN}`, "--var", `SITE_PASSWORD:${SITE}`,
     "--show-interactive-dev-session=false"], "api");
   // 两个实例共用一个本地 D1：依次启动，避免同时初始化 SQLite 撞锁（SQLITE_BUSY）。
   check(await waitFor(`http://127.0.0.1:${API_PORT}/`, async (r) => r.ok), "本地数据接口启动");
   background([WRANGLER, "dev", "-c", gen("inbox"), "--ip", "127.0.0.1", "--port", String(INBOX_PORT),
-    "--persist-to", PERSIST, "--inspector-port", "19432", "--show-interactive-dev-session=false"], "inbox");
+    "--persist-to", PERSIST, "--inspector-port", String(await freePort()), "--show-interactive-dev-session=false"], "inbox");
   check(await waitFor(`http://127.0.0.1:${INBOX_PORT}/`, async (r) => r.status < 600), "本地收信 Worker 启动");
 
-  // 4) 模拟一封外部来信
+  // 4) 默认登记模式：未知地址不入库；登记后同一封模拟信可正常接收。
+  const apiRequest = async (route, body) => {
+    const res = await fetch(`http://127.0.0.1:${API_PORT}${route}`, {
+      headers: { "x-admin-auth": ADMIN, "content-type": "application/json" },
+      ...(body && { method: "POST", body: JSON.stringify(body) }), signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`API ${route}: HTTP ${res.status}`);
+    return res.json();
+  };
+  check((await apiRequest("/admin/settings/receiving")).receive_mode === "registered", "新部署默认登记模式");
   const subject = `MH-E2E-${Date.now()}`;
   const raw = [
     "From: Tester <tester@example.org>",
@@ -105,12 +128,18 @@ try {
     "",
     "你好，这是离线自测邮件。验证码 482913",
   ].join("\r\n");
-  const sent = await fetch(`http://127.0.0.1:${INBOX_PORT}/cdn-cgi/handler/email?from=tester@example.org&to=hello@${DOMAIN}`, {
-    method: "POST", body: raw,
+  const deliver = (name) => fetch(`http://127.0.0.1:${INBOX_PORT}/cdn-cgi/handler/email?from=tester@example.org&to=${name}@${DOMAIN}`, {
+    method: "POST", body: raw.replace(`To: hello@${DOMAIN}`, `To: ${name}@${DOMAIN}`), signal: AbortSignal.timeout(10_000),
   });
+  await (await deliver("hello")).text();
+  check((await apiRequest("/admin/mailboxes")).results.length === 0, "未登记来信不会创建信箱");
+  check((await apiRequest("/admin/messages/recent")).results.length === 0, "未登记来信不会写入邮件");
+  const registered = await apiRequest("/admin/new_address", { name: "hello", domain: DOMAIN });
+  check(registered.email === `hello@${DOMAIN}`, "先登记测试地址");
+  const sent = await deliver("hello");
   check(sent.ok, "收信 Worker 接受模拟邮件", `HTTP ${sent.status}`);
 
-  // 5) 数据接口能查到：信箱自动建档 + 正文 + 验证码
+  // 5) 数据接口能查到：已登记信箱 + 正文 + 验证码
   let found = null;
   await waitFor(`http://127.0.0.1:${API_PORT}/admin/messages/recent?limit=5`, async () => {
     const r = await fetch(`http://127.0.0.1:${API_PORT}/admin/messages/recent?limit=5`, { headers: { "x-admin-auth": ADMIN } });
@@ -119,11 +148,25 @@ try {
     return Boolean(found);
   }, 20);
   check(Boolean(found), "数据接口查到这封信");
-  check(found?.mailbox_email === `hello@${DOMAIN}`, "按收件人自动建信箱", `mailbox_email=${found?.mailbox_email}`);
+  check(found?.mailbox_email === `hello@${DOMAIN}`, "邮件归属已登记收件人", `mailbox_email=${found?.mailbox_email}`);
   check(found?.code === "482913", "验证码提取", `code=${found?.code}`);
   const boxes = await (await fetch(`http://127.0.0.1:${API_PORT}/admin/mailboxes`, { headers: { "x-admin-auth": ADMIN } })).json();
   const box = (boxes.results || []).find((b) => b.email === `hello@${DOMAIN}`);
   check(box?.last_code === "482913", "信箱列表带出最近验证码", `last_code=${box?.last_code}`);
+  check(box?.id === registered.id, "收信保留登记信箱 ID");
+  await apiRequest("/admin/settings/receiving", { receive_mode: "auto" });
+  await (await deliver("automatic")).text();
+  const automatic = (await apiRequest("/admin/mailboxes")).results.find((b) => b.email === `automatic@${DOMAIN}`);
+  check(automatic?.fingerprint === "auto-inbound" && automatic.message_count === 1, "开启自动模式后首次来信自动建箱");
+  await apiRequest("/admin/settings/receiving", { receive_mode: "registered" });
+  await (await deliver("automatic")).text();
+  const blocked = (await apiRequest("/admin/mailboxes")).results.find((b) => b.id === automatic?.id);
+  check(blocked?.message_count === 1, "切回登记模式，自动发现地址不再接收新信");
+  const adopted = await apiRequest("/admin/new_address", { name: "automatic", domain: DOMAIN });
+  check(adopted.id === automatic?.id, "补登记保留信箱 ID 与历史邮件");
+  await (await deliver("automatic")).text();
+  check((await apiRequest("/admin/mailboxes")).results.find((b) => b.id === adopted.id)?.message_count === 2,
+    "补登记后恢复收信且保留历史");
   const unauth = await fetch(`http://127.0.0.1:${API_PORT}/admin/messages/recent`);
   check(unauth.status === 401, "数据接口无密钥拒绝访问", `HTTP ${unauth.status}`);
 

@@ -130,15 +130,9 @@ function looksLikeCodeToken(token) {
 
   // 纯字母 token 一律**不**算验证码。
   //
-  // 旧规则是 `hasLetter && upper.length <= 6 → true`，于是英文验证信里满地的
-  // 4-6 字母单词（YOUR / CODE / LOGIN / EMAIL / VERIFY…）全被当成候选码；
-  // 又因为「主题行」权重高、且「附近有关键词」再 +70，主题里的 YOUR 能直接
-  // 盖过正文里真正的数字码。实测（2026-07-27）：
-  //     "Your code is 123456"            → 旧规则给出 "YOUR"
-  //     "Your ChatGPT code is 908070"    → 旧规则给出 "CODE"
-  //     线上真实邮件                       → 曾给出 "ZWNJ"
-  // 中文信不受影响（"您的验证码是 123456" 一直是对的），所以这个 bug 一直
-  // 藏在英文侧 —— 而 ChatGPT / OpenAI 的验证信恰好都是英文。
+  // 仅按字母长度判断会把英文验证信里的 4-6 字母单词（YOUR / CODE / LOGIN /
+  // EMAIL / VERIFY…）当成候选码；主题行权重较高时，YOUR 或 CODE 可能盖过正文中的数字码。
+  // 中文信的数字码不受此规则影响；邮件验证码通常是纯数字或数字+字母混合。
   //
   // 邮件验证码在实践中要么纯数字、要么数字+字母混合；纯字母的极罕见，
   // 用它换回英文信全线可用是划算的。真遇到纯字母码，再按「整行只有这个 token」
@@ -699,6 +693,42 @@ async function sendDomainMail(env, body = {}) {
     subject,
     created_at: createdAt,
   };
+}
+
+
+const RECEIVE_MODES = new Set(["registered", "auto"]);
+
+async function getReceiveMode(env) {
+  const row = await env.DB.prepare(
+    "SELECT value FROM mail_settings WHERE key = 'receive_mode'",
+  ).first();
+  const mode = row?.value ?? "registered";
+  if (!RECEIVE_MODES.has(mode)) throw new Error("Invalid receive mode");
+  return mode;
+}
+
+async function setReceiveMode(env, mode) {
+  if (!RECEIVE_MODES.has(mode)) throw new Error("Invalid receive mode");
+  await env.DB.prepare(
+    "INSERT INTO mail_settings (key, value) VALUES ('receive_mode', ?) " +
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).bind(mode).run();
+}
+
+// Run before automatic registration, MIME parsing or message storage.
+// A DB failure must propagate: falling back to auto mode would bypass the policy.
+async function checkInboundRecipient(env, email) {
+  const mode = await getReceiveMode(env);
+  if (mode === "auto") return { allowed: true, mailboxId: null };
+  const row = await env.DB.prepare(
+    `SELECT mb.id FROM mailboxes mb
+      WHERE mb.email = ? COLLATE NOCASE AND mb.status = 'active'
+        AND COALESCE(mb.fingerprint, '') != 'auto-inbound'
+        AND EXISTS (SELECT 1 FROM domains d
+                     WHERE d.domain = mb.domain COLLATE NOCASE AND d.enabled = 1)
+      LIMIT 1`,
+  ).bind(email).first();
+  return { allowed: Boolean(row?.id), mailboxId: row?.id ?? null };
 }
 
 
@@ -1666,7 +1696,7 @@ function withCors(response, request, env) {
   });
 }
 
-function json(data, status = 200) {
+function json(data, status = 200, headers = {}) {
 
 return new Response(JSON.stringify(data), {
 
@@ -1674,7 +1704,8 @@ status,
 
 headers: {
 
-"content-type": "application/json; charset=UTF-8"
+"content-type": "application/json; charset=UTF-8",
+...headers
 
 }
 
@@ -2064,7 +2095,8 @@ await env.DB.prepare(
 
 (id, email, domain, subdomain, local_part, fingerprint, status, created_at, expires_at)
 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(email) DO UPDATE SET fingerprint = excluded.fingerprint, status = 'active'`
 
 )
 
@@ -2096,11 +2128,15 @@ expiresAt
 
 const token = makeMailboxToken(email);
 
+// Registering an automatically discovered address keeps its id and old messages.
+const registered = await env.DB.prepare("SELECT id FROM mailboxes WHERE email = ? COLLATE NOCASE")
+  .bind(email).first();
+
   
 
 return {
 
-id: mailboxId,
+id: registered?.id || mailboxId,
 
 email,
 
@@ -2149,6 +2185,27 @@ async function handleRequest(request, env, ctx) {
 try {
 
 const url = new URL(request.url);
+
+if (url.pathname === "/admin/settings/receiving") {
+  if (!isAdminAuthorized(extractAdminToken(request, null, url), env)) {
+    return json({ ok: false, error: "Invalid admin token" }, 401);
+  }
+  if (request.method === "GET") {
+    return json({ ok: true, receive_mode: await getReceiveMode(env) }, 200, { "cache-control": "no-store" });
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    if (!RECEIVE_MODES.has(body?.receive_mode)) {
+      return json({ ok: false, error: "receive_mode must be registered or auto" }, 400);
+    }
+    await setReceiveMode(env, body.receive_mode);
+    return json({ ok: true, receive_mode: body.receive_mode }, 200, { "cache-control": "no-store" });
+  }
+  return json({ ok: false, error: "Method not allowed" }, 405);
+}
 
   
 
@@ -2461,7 +2518,7 @@ return json({ results });
 
 }
 
-// ── 以下三个端点为 mail-hub 统一层新增（2026-07-27）────────────────────────
+// ── 以下三个端点为 mail-hub 统一层提供的发现接口 ────────────────────────
 // 目的：让外部能「发现」信箱与邮件，而不必事先知道有哪些信箱。
 // 全部只读、全部走 /admin/*（x-admin-auth），不改任何既有端点的行为。
 // 注：本段刻意用常规单行距书写；本文件其余部分 55% 是空行，是粘贴产生的
@@ -2469,7 +2526,7 @@ return json({ results });
 
 // GET /admin/mailboxes?q=&limit=&offset=
 // 列出**真实存在于 D1 的全部信箱**，带最近来信时间 / 最新验证码 / 邮件数。
-// 这是「避免遗漏」的关键：以前外部只能按地址逐个猜，猜不到的信箱等于不存在。
+// 这是「避免遗漏」的关键：调用方不需要预先猜测每个地址。
 if (request.method === "GET" && url.pathname === "/admin/mailboxes") {
   const token = extractAdminToken(request, {}, url);
   if (!isAdminAuthorized(token, env)) {
@@ -2603,8 +2660,8 @@ if (request.method === "GET" && url.pathname === "/admin/messages/recent") {
   binds.push(limit, offset);
 
   // ⚠️ 列表端点**只回摘要，不回完整正文**。
-  // 邮件 HTML 动辄几十 KB（实测单封 46KB），100 封就是几 MB —— 实测拉完整正文
-  // 要 6 秒，截断后 <1 秒。完整正文走 /admin/message?id= 单封取。
+  // 邮件 HTML 可能达到几十 KB，列表接口只返回摘要以控制响应大小。
+  // 完整正文走 /admin/message?id= 单封取。
   const rows = await env.DB.prepare(
     `SELECT m.id, m.mailbox_id, m.mail_from, m.subject,
             substr(m.text_body, 1, 400) AS text_body,

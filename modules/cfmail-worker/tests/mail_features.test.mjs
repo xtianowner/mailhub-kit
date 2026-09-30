@@ -21,6 +21,7 @@ function makeInboundEnv() {
           return this;
         },
         async first() {
+          if (sql.includes("FROM mail_settings")) return { value: "auto" };
           if (sql.includes("FROM mailboxes")) {
             return { id: "mbx_test", email: "hello@example.net" };
           }

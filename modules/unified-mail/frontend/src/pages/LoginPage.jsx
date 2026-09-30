@@ -23,6 +23,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loginError, setLoginError] = useState('')
 
   const canSubmit = IS_CLOUD ? username.trim() && password : token.trim()
 
@@ -30,12 +31,17 @@ export default function LoginPage() {
     e.preventDefault()
     if (!canSubmit || busy) return
     setBusy(true)
+    setLoginError('')
     try {
       const ok = await login(
         IS_CLOUD ? { username: username.trim(), password } : token.trim(),
       )
       if (ok) toast.success(t('login.success'))
       else toast.error(t('login.failed'))
+    } catch (err) {
+      setLoginError(err?.status === 429
+        ? t('login.rateLimited', { seconds: Math.max(1, err.retryAfter || 60) })
+        : t('login.unavailable'))
     } finally {
       setBusy(false)
     }
@@ -125,6 +131,8 @@ export default function LoginPage() {
               />
             </div>
           )}
+
+          {loginError && <p role="alert" className="text-sm text-danger">{loginError}</p>}
 
           <Button
             type="submit"

@@ -38,6 +38,16 @@ export async function runChecks({ print = true } = {}) {
       const r = await get(web + "/");
       return [r.status === 200 && r.type.includes("text/html"), `HTTP ${r.status}`];
     }],
+    ["收信模式可读取且有效", async () => {
+      const r = await get(api + "/admin/settings/receiving", admin);
+      const mode = r.json?.receive_mode;
+      return [r.status === 200 && ["registered", "auto"].includes(mode),
+        mode === "auto" ? "auto（任意地址收信；如需限制，请在设置切回登记模式）" : `HTTP ${r.status} mode=${mode ?? "缺失（检查迁移与 API 部署）"}`];
+    }],
+    ["未授权不能读取收信设置", async () => {
+      const r = await get(api + "/admin/settings/receiving");
+      return [r.status === 401, `HTTP ${r.status}（应为 401）`];
+    }],
     ["未登录访问数据被拒绝", async () => {
       const r = await get(`${web}/admin/mailboxes?cachebust=${Date.now()}`);
       return [r.status === 401, `HTTP ${r.status}（应为 401）`];
@@ -60,7 +70,7 @@ export async function runChecks({ print = true } = {}) {
       return [Boolean(mx?.length && mx.every(isCloudflareMx)), mx ? mx.join(", ") || "无 MX" : "查询失败"];
     }],
     ["本地版运行中且免登录", async () => {
-      if (!local) return [false, "未启动（./start.sh）"];
+      if (!local) return [false, `未启动（${process.platform === "win32" ? "start.cmd" : "./start.sh"}）`];
       const r = await get(`http://127.0.0.1:${local.port}/auth/status`);
       return [r.json?.local === true && r.json?.authed === true, `http://127.0.0.1:${local.port}`];
     }],
@@ -96,8 +106,9 @@ export async function runChecks({ print = true } = {}) {
     启动：${path.join(ROOT, process.platform === "win32" ? "start.cmd" : "start.sh")}
     停止：${path.join(ROOT, process.platform === "win32" ? "stop.cmd" : "stop.sh")}
     只允许本机访问，免登录；数据与云端是同一份。
-📮 收信：任意前缀@${cfg.domain} 都能收，第一次来信自动建信箱。
-    自测：用你的 Gmail / QQ 邮箱发一封信到 test@${cfg.domain}，一分钟内到登录网页里查看。
+📮 收信：按网页「设置 → 收信模式」执行；默认只接收已登记的地址。
+    登记模式请先在「域名邮箱」创建地址；自动模式首次来信会自动建信箱。
+    自测：先登记 test@${cfg.domain}，再用你的 Gmail / QQ 邮箱发一封信，一分钟内到登录网页里查看。
 🔌 数据接口（二次开发用）：${api}
     密钥在本机 ${DEV_VARS}（CFMAIL_ADMIN_TOKEN / CFMAIL_SITE_PASSWORD）
     接口说明：${path.join(KIT, "docs", "data-api.md")}

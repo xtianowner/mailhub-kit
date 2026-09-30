@@ -130,15 +130,9 @@ function looksLikeCodeToken(token) {
 
   // 纯字母 token 一律**不**算验证码。
   //
-  // 旧规则是 `hasLetter && upper.length <= 6 → true`，于是英文验证信里满地的
-  // 4-6 字母单词（YOUR / CODE / LOGIN / EMAIL / VERIFY…）全被当成候选码；
-  // 又因为「主题行」权重高、且「附近有关键词」再 +70，主题里的 YOUR 能直接
-  // 盖过正文里真正的数字码。实测（2026-07-27）：
-  //     "Your code is 123456"            → 旧规则给出 "YOUR"
-  //     "Your ChatGPT code is 908070"    → 旧规则给出 "CODE"
-  //     线上真实邮件                       → 曾给出 "ZWNJ"
-  // 中文信不受影响（"您的验证码是 123456" 一直是对的），所以这个 bug 一直
-  // 藏在英文侧 —— 而 ChatGPT / OpenAI 的验证信恰好都是英文。
+  // 仅按字母长度判断会把英文验证信里的 4-6 字母单词（YOUR / CODE / LOGIN /
+  // EMAIL / VERIFY…）当成候选码；主题行权重较高时，YOUR 或 CODE 可能盖过正文中的数字码。
+  // 中文信的数字码不受此规则影响；邮件验证码通常是纯数字或数字+字母混合。
   //
   // 邮件验证码在实践中要么纯数字、要么数字+字母混合；纯字母的极罕见，
   // 用它换回英文信全线可用是划算的。真遇到纯字母码，再按「整行只有这个 token」
@@ -686,7 +680,7 @@ async function parseEmailContentFromRaw(rawSource, fallbackSubject = "") {
 //    绝不能静默吞掉（吞掉 = 告诉 CF 已投递 = 这封信永久消失且零信号）。
 
 // 兜底桶：只有「自动建信箱」也失败时才用。落进这里的信收件人不可考，
-// 是最后防线而非常规路径（2026-07-27 之前它是常规路径）。
+// 它是最后防线，不是常规路径。
 const FALLBACK_MAILBOX_ID = "inbox_test";
 
 // 标记自动发现的信箱，便于与 /admin/new_address 显式创建的区分、也便于日后清理。
@@ -729,7 +723,7 @@ async function enabledRootDomains(env) {
 /**
  * 拿到这封信该落的 mailbox_id；信箱不存在就**自动建一个**。
  *
- * 为什么必须这么做：以前信箱不存在时直接回退到共用桶 `inbox_test`，而 messages 表
+ * 为什么必须这么做：信箱不存在时如果直接回退到共用桶 `inbox_test`，而 messages 表
  * 没有 mail_to 列 —— 真实收件人就此永久丢失，`/api/mailboxes/code` 查这个地址也是
  * 404，等于「信收到了但接不了码，还不知道是发给谁的」。Catch-All 场景下这是系统性遗漏。
  *
@@ -869,7 +863,7 @@ async function storeMessageSafely(env, m) {
  *
  * 为什么抽出来：src/mail-inbox.js 与 Dashboard 直贴版的**解析方式不同**
  * （前者 PostalMime 增强，后者只用自带 raw parser），但解析之后这段
- * 「选哪份正文、提码、提链接」的逻辑必须一模一样。以前它在两处各写一份，
+ * 「选哪份正文、提码、提链接」的逻辑必须一模一样。如果在两处各写一份，
  * 结果换 handler 时直贴版这份被漏掉 —— 引用了不存在的函数，靠 try/catch
  * 兜住降级，验证码悄悄全变成 null（测试才抓出来）。
  *
@@ -915,6 +909,42 @@ function extractMailLink(...sources) {
 }
 
 
+const RECEIVE_MODES = new Set(["registered", "auto"]);
+
+async function getReceiveMode(env) {
+  const row = await env.DB.prepare(
+    "SELECT value FROM mail_settings WHERE key = 'receive_mode'",
+  ).first();
+  const mode = row?.value ?? "registered";
+  if (!RECEIVE_MODES.has(mode)) throw new Error("Invalid receive mode");
+  return mode;
+}
+
+async function setReceiveMode(env, mode) {
+  if (!RECEIVE_MODES.has(mode)) throw new Error("Invalid receive mode");
+  await env.DB.prepare(
+    "INSERT INTO mail_settings (key, value) VALUES ('receive_mode', ?) " +
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).bind(mode).run();
+}
+
+// Run before automatic registration, MIME parsing or message storage.
+// A DB failure must propagate: falling back to auto mode would bypass the policy.
+async function checkInboundRecipient(env, email) {
+  const mode = await getReceiveMode(env);
+  if (mode === "auto") return { allowed: true, mailboxId: null };
+  const row = await env.DB.prepare(
+    `SELECT mb.id FROM mailboxes mb
+      WHERE mb.email = ? COLLATE NOCASE AND mb.status = 'active'
+        AND COALESCE(mb.fingerprint, '') != 'auto-inbound'
+        AND EXISTS (SELECT 1 FROM domains d
+                     WHERE d.domain = mb.domain COLLATE NOCASE AND d.enabled = 1)
+      LIMIT 1`,
+  ).bind(email).first();
+  return { allowed: Boolean(row?.id), mailboxId: row?.id ?? null };
+}
+
+
 function randomString(length = 6) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
@@ -957,10 +987,15 @@ export default {
       /* 同上 */
     }
 
-    // ── 以下每一步都只是「增强」：失败一律降级，绝不阻断落库 ──────────────
-    let mailboxId = FALLBACK_MAILBOX_ID;
+    const recipient = await checkInboundRecipient(env, mailTo);
+    if (!recipient.allowed) {
+      message.setReject("Recipient is not registered or is disabled");
+      return;
+    }
+
+    let mailboxId = recipient.mailboxId || FALLBACK_MAILBOX_ID;
     try {
-      mailboxId = await ensureMailboxId(env, mailTo);
+      if (!recipient.mailboxId) mailboxId = await ensureMailboxId(env, mailTo);
     } catch (error) {
       // ensureMailboxId 内部已兜底，这里是第二层保险
       console.log(

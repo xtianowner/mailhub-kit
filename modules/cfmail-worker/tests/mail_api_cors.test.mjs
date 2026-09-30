@@ -69,7 +69,7 @@ test("OPTIONS 预检直接放行（不带鉴权头也必须过）", async () => 
     method: "OPTIONS",
     headers: { Origin: "https://mail.example.com", "Access-Control-Request-Method": "GET" },
   }), makeEnv(), {});
-  assert.equal(res.status, 204, "预检必须 204 —— 之前是 404，浏览器连真请求都发不出去");
+  assert.equal(res.status, 204, "预检必须返回 204，浏览器才能发送真实请求");
   assert.equal(res.headers.get("access-control-allow-origin"), "https://mail.example.com");
   assert.match(res.headers.get("access-control-allow-headers") || "", /x-admin-auth/);
 });

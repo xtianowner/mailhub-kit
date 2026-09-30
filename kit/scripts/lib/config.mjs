@@ -117,6 +117,7 @@ export function wranglerConfigs(cfg, { databaseId }) {
     main: rel(path.join(GATEWAY_DIR, "src", "index.js")),
     compatibility_date: "2026-07-01",
     workers_dev: false,
+    d1_databases: d1,
     routes: [{ pattern: cfg.web_host, custom_domain: true }],
     assets: {
       directory: rel(path.join(FRONTEND_DIR, "dist-cloud")),

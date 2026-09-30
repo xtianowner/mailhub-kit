@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../lib/api.js'
+import { IS_CLOUD } from '../lib/hubApi.js'
 
 // Auth gate state. Only meaningful when the backend reports auth_enabled=true.
 // When auth_enabled=false (default) the app runs fully open — no login wall.
@@ -17,9 +18,8 @@ export function AuthProvider({ children }) {
       setAuthEnabled(!!s.auth_enabled)
       setAuthed(!!s.authed)
     } catch {
-      // If auth-status itself fails, don't hard-block the app — assume open.
-      setAuthEnabled(false)
-      setAuthed(true)
+      setAuthEnabled(IS_CLOUD)
+      setAuthed(!IS_CLOUD)
     } finally {
       setStatus('ready')
     }
@@ -39,7 +39,8 @@ export function AuthProvider({ children }) {
         return true
       }
       return false
-    } catch {
+    } catch (error) {
+      if (IS_CLOUD && error.status !== 401) throw error
       return false
     }
   }, [])

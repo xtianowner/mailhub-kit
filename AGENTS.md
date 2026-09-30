@@ -1,8 +1,8 @@
-<!-- purpose: 给 AI 助手（Codex / Claude Code / Hermes 等）的入口：把本项目放到固定位置、注册一次性搭建 skill、开始或继续搭建。 -->
+<!-- purpose: 给 AI 助手（Codex / Claude Code / Hermes 等）的入口：安装项目、注册 MailHub skill、完成域名邮箱部署。 -->
 
 # MailHub Kit · AI 助手入口
 
-用户把这个项目交给你，是要你**替他把自己的域名邮箱完整搭建成功**。这是一次性任务：以用户亲自确认邮箱能用为结束。没建成之前，你要一直和用户核对现状、往下推进。
+用户把这个项目交给你，是要你**替他把自己的域名邮箱完整搭建成功**。这是一次性任务：机器验收通过、并由用户亲自确认邮箱能用，才算结束。没建成之前，你要一直和用户核对现状、往下推进。
 
 按下面三步走。先不要问用户问题，问询在 skill 的第 4 节统一进行。
 
@@ -36,10 +36,12 @@
 | Hermes Agent | `~/.hermes/skills/mailhub-setup/` |
 | 其它支持 Agent Skills（SKILL.md）的工具 | `~/.agents/skills/mailhub-setup/` |
 
-本次不需要重启工具。邮箱建好、用户确认之后，这个 skill 的任务就结束了；用户愿意的话可以删掉它，日常使用不需要它。
+支持 Agent Skills 的工具通常不用重启就能发现这个 skill。邮箱建好、用户确认之后，这个 skill 的任务就结束了，日常使用不需要它；用户愿意的话可以删掉。
 
 ## 3. 开始执行
 
 读取 `kit/skill/mailhub-setup/SKILL.md`，从第 0 节开始严格照做。
 
-先确认 `node -v` 能运行、版本不低于 22；不满足就按 SKILL 第 3 节先装好。然后运行 `node kit/scripts/setup.mjs status`，确认是全新开始，还是接着上次继续。
+先确认真实的操作系统，以及 `node -v` 能运行、版本不低于 22（推荐 22 或 24 LTS）；不满足就按 SKILL 第 3 节先装好，不必替换用户已有的全局 Node。然后运行 `node kit/scripts/setup.mjs status`（Windows 跑过 `configs` 后也可用 `.\mailhub.cmd status`），确认是全新开始，还是接着上次继续。
+
+几处容易误判的地方（细节见 SKILL）：新部署默认只收登记过的地址，验收前用 `prepare-test` 登记测试地址，邮箱列表为空不代表部署失败；Cloudflare 授权没有弹窗、或页面提示 verifier 已使用时，用 `login --device` 核实；重复运行会沿用已有配置和授权，并保留用户自己的改动。

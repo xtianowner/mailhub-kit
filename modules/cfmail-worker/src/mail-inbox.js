@@ -16,6 +16,7 @@ import {
   FALLBACK_MAILBOX_ID,
 } from "./mailbox_registry.mjs";
 import { storeAttachmentsSafely } from "./mail_attachments.mjs";
+import { checkInboundRecipient } from "./mail_security.mjs";
 
 function randomString(length = 6) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -99,10 +100,16 @@ export default {
       /* 同上 */
     }
 
-    // ── 以下每一步都只是「增强」：失败一律降级，绝不阻断落库 ──────────────
-    let mailboxId = FALLBACK_MAILBOX_ID;
+    const recipient = await checkInboundRecipient(env, mailTo);
+    if (!recipient.allowed) {
+      message.setReject("Recipient is not registered or is disabled");
+      return;
+    }
+
+    // After admission, parsing/registration failures may degrade as before.
+    let mailboxId = recipient.mailboxId || FALLBACK_MAILBOX_ID;
     try {
-      mailboxId = await ensureMailboxId(env, mailTo);
+      if (!recipient.mailboxId) mailboxId = await ensureMailboxId(env, mailTo);
     } catch (error) {
       // ensureMailboxId 内部已兜底，这里是第二层保险
       console.log(

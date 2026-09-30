@@ -2,12 +2,12 @@
 // MailHub 一键搭建：把「Cloudflare 账号 + 一个域名 + 这台电脑」变成
 //   · 云端登录网页（任何设备登录收信）
 //   · 本地版（本机一条命令启动，免登录）
-//   · 任意前缀@你的域名 自动收信
+//   · 默认登记后收信，可在设置中开启任意前缀自动收信
 //
 // 用法（给 agent 读，详见 kit/skill/mailhub-setup/SKILL.md）：
 //   node kit/scripts/setup.mjs init --domain example.com --web-host mail.example.com --login-user you@gmail.com
 //                                   [--api-host api-mail.example.com] [--attachments] [--prefix mailhub]
-//   node kit/scripts/setup.mjs all            按顺序跑完全部步骤（可重跑，已完成的自动跳过）
+//   node kit/scripts/setup.mjs all            按顺序重跑全部步骤（复用已有资源）
 //   node kit/scripts/setup.mjs <步骤名>        只跑某一步
 //   node kit/scripts/setup.mjs plan           只打印计划，不做任何改动
 //   node kit/scripts/setup.mjs status [--json] 现状：每步是否完成、卡在哪、下一步、是否已达成完成标准
@@ -35,6 +35,7 @@ import {
 import { buildFrontend, installDeps } from "./lib/build.mjs";
 import { start as startLocal } from "./local.mjs";
 import { runChecks } from "./verify.mjs";
+import { prepareTestMailbox } from "./lib/test-mailbox.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);
@@ -68,7 +69,7 @@ function stepInit() {
   const cfg = {
     domain: opt("domain") ?? prev.domain,
     web_host: opt("web-host") ?? prev.web_host,
-    // 换了域名又没给数据接口地址：按新域名重新派生，而不是沿用旧域名下的地址。
+    // 域名变更且未提供数据接口地址时，按当前域名重新派生接口地址。
     api_host: opt("api-host") ?? (domainChanged ? undefined : prev.api_host),
     login_user: opt("login-user") ?? prev.login_user,
     attachments: flag("attachments") ? true : flag("no-attachments") ? false : (prev.attachments ?? false),
@@ -77,10 +78,10 @@ function stepInit() {
   saveConfig(cfg);
   const saved = loadConfig();
   if (before && JSON.stringify(before) !== JSON.stringify(saved)) {
-    // 配置变了：之前的完成记录与用户确认都不再代表现状（各步可重跑，已有资源会复用）。
+    // 配置变更后，完成记录与用户确认不再代表当前配置（各步可重跑，已有资源会复用）。
     const { done = {} } = loadState();
     saveState({ done: { deps: done.deps, login: done.login }, user_confirmed: null, last_error: null });
-    log.info("配置有变化：已清空之前的完成记录，接下来按新配置重跑各步");
+    log.info("配置有变化：已清空完成记录，接下来按当前配置重跑各步");
   }
   log.ok(`已保存配置：${path.relative(ROOT, path.join(STATE_DIR, "config.json"))}`);
   for (const [k, v] of Object.entries(saved)) log.info(`${k} = ${v}`);
@@ -125,9 +126,9 @@ async function deviceLogin() {
   }
   const url = text.match(/please visit:\s*(\S+)/i)?.[1];
   const code = text.match(/enter the code:\s*(\S+)/i)?.[1];
-  if (!url || !code) throw new StepError("没拿到设备登录链接\n" + text.slice(-600), { next: "稍后重跑：node kit/scripts/setup.mjs login" });
+  if (!url || !code) throw new StepError("没拿到设备登录链接\n" + text.slice(-600), { next: "稍后重跑：node kit/scripts/setup.mjs login --device" });
   throw needHuman("请在任意设备（手机也行）的浏览器完成 Cloudflare 授权",
-    `打开：${url}\n输入验证码：${code}\n授权后重跑：node kit/scripts/setup.mjs login`);
+    `打开：${url}\n输入验证码：${code}\n授权后重跑：node kit/scripts/setup.mjs login --device\n旧页面提示 verifier 已使用时不要刷新，以此命令检查现有登录为准。`);
 }
 
 async function stepLogin() {
@@ -255,7 +256,7 @@ async function stepPreflight() {
       throw needHuman(`你的账号里已有同名 Worker：${clash.join(", ")}`,
         "为免覆盖它们，请你决定：\n" +
         "· 它们是别的项目：告诉我一个新前缀（小写字母开头，例如 mymail），我会用 --prefix 重新 init\n" +
-        "· 它们就是你以前用本套件建的：告诉我「是我之前建的」，我会加 --reuse-workers 继续");
+        "· 它们属于本套件且需要复用：告诉我「复用这些 Worker」，我会加 --reuse-workers 继续");
     }
   }
   log.ok("冲突检查通过：没有会被覆盖的邮箱、网址或 Worker");
@@ -322,6 +323,7 @@ function stepConfigs() {
   const { database_id: databaseId } = loadState();
   if (!databaseId) throw new StepError("还没有数据库", { next: "node kit/scripts/setup.mjs d1" });
   writeConfigs(cfg, databaseId);
+  writeJson(path.join(STATE_DIR, "runtime.json"), { execPath: process.execPath, version: process.version });
 
   // 两把接口密钥只在本机 .dev.vars 里留一份（本地版要用），同时推给云端两个 Worker。
   const vars = readDevVars();
@@ -331,7 +333,7 @@ function stepConfigs() {
     LOCAL_NO_LOGIN: "1",
   };
   writeDevVars(next);
-  log.ok(`已生成部署配置与本机密钥文件（${path.relative(ROOT, DEV_VARS)}，仅本人可读）`);
+  log.ok(`已生成部署配置与本机密钥文件（${path.relative(ROOT, DEV_VARS)}，不要分享或提交）`);
 }
 
 /** 清掉上次被中断（超时 / Ctrl-C）时没来得及删除的临时密钥文件。 */
@@ -544,10 +546,11 @@ async function stepPassword() {
     log.ok("登录密码已设置");
     return;
   }
-  const manual = `node ${path.relative(process.cwd(), path.join(KIT, "scripts", "set-login.mjs"))}`;
+  const q = (v) => `'${v.replace(/'/g, process.platform === "win32" ? "''" : "'\\''")}'`;
+  const manual = `${process.platform === "win32" ? "& " : ""}${q(process.execPath)} ${q(path.join(KIT, "scripts", "set-login.mjs"))}`;
   const opened = !flag("no-terminal") && openLoginTerminal();
-  if (opened) log.info("已弹出一个终端窗口：请在里面设置登录密码（输入时不显示，不经过聊天）");
-  else log.info(`请在你自己的终端里执行：${manual}`);
+  if (opened) log.info("已请求打开终端窗口；如果能看到，请在里面设置登录密码（输入时不显示，不经过聊天）");
+  log.info(`如果没有窗口，请在你自己的${process.platform === "win32" ? " PowerShell" : "终端"}里执行：${manual}`);
   const waitMin = Math.min(Number(opt("wait") || 8), 8); // 多数 agent 工具单条命令上限 10 分钟
   const deadline = Date.now() + waitMin * 60_000;
   while (Date.now() < deadline) {
@@ -564,6 +567,23 @@ async function stepPassword() {
 async function stepVerify() {
   const ok = await runChecks({ print: true });
   if (!ok) throw new StepError("有检查项未通过（见上表）", { next: "按失败项的提示处理后重跑：node kit/scripts/setup.mjs verify" });
+}
+
+async function stepPrepareTest() {
+  const cfg = loadConfig();
+  const vars = readDevVars();
+  const address = await prepareTestMailbox({ domain: cfg.domain, address: opt("mail"),
+    request: async (route, { method = "GET", body } = {}) => {
+      const res = await fetchx(`https://${cfg.api_host}${route}`, {
+        method, headers: { "x-admin-auth": vars.CFMAIL_ADMIN_TOKEN || "", "content-type": "application/json" },
+        ...(body && { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) throw new StepError(`准备测试邮箱失败（HTTP ${res.status}）`, { next: "检查 deploy-api、域名是否启用和数据库迁移后重跑 prepare-test" });
+      return res.json();
+    },
+  });
+  log.ok(`测试收件地址已登记：${address}（已有邮件保留）`);
+  log.info("现在请用户用自己的外部邮箱发一封信；此命令不会发送邮件，也不代表收信验收已通过。");
 }
 
 /* ── 编排 ──────────────────────────────────────────────── */
@@ -583,6 +603,7 @@ const STEPS = [
   ["routing", "开启收信路由", stepRouting],
   ["local", "启动本地版", stepLocal],
   ["password", "设置登录密码（需要你本人输入）", stepPassword],
+  ["prepare-test", "登记测试收件地址（不发送邮件）", stepPrepareTest],
   ["verify", "全链路验收", stepVerify],
 ];
 
@@ -592,7 +613,7 @@ function printPlan() {
   console.log("将要在你的 Cloudflare 账号里创建 / 配置：");
   console.log(`  · 数据库 D1：${n.db}`);
   if (cfg.attachments) console.log(`  · 附件存储 R2：${n.bucket}`);
-  console.log(`  · 收信 Worker：${n.inbox}（接收 任意前缀@${cfg.domain}）`);
+  console.log(`  · 收信 Worker：${n.inbox}（默认仅接收已登记地址，可在设置中切换自动模式）`);
   console.log(`  · 数据接口：https://${cfg.api_host}（Worker ${n.api}）`);
   console.log(`  · 登录网页：https://${cfg.web_host}（Worker ${n.web}，登录名 ${cfg.login_user}）`);
   console.log(`  · ${cfg.domain} 的 Email Routing：开启，兜底规则 → ${n.inbox}`);
@@ -617,7 +638,7 @@ async function runStep([key, title, fn]) {
 }
 
 /**
- * 记为完成：当场重跑 10 项验收（不信旧记录），并到数据接口里查到用户发的测试信 ——
+ * 记为完成：当场重跑全部验收（不信旧记录），并到数据接口里查到用户发的测试信 ——
  * 「收到测试信」要有证据，不只凭一句「收到了」。
  */
 async function confirmDone() {
@@ -639,7 +660,7 @@ async function confirmDone() {
   } catch { found = []; }
   if (!found.length) {
     throw needHuman(`还没查到发给 ${address} 的邮件`,
-      `请用你自己的 Gmail / QQ 等邮箱发一封信到 ${address}，一分钟后再确认。\n` +
+      `先用 prepare-test --mail ${address} 登记地址，再用你自己的 Gmail / QQ 等邮箱发一封信，一分钟后再确认。\n` +
       `如果你发到了别的地址，告诉我那个地址，我会用 --mail <地址> 查。`);
   }
   const { done = {} } = loadState();
@@ -693,6 +714,9 @@ async function main() {
   if (cmd === "all") {
     loadConfig();
     const from = opt("from");
+    if (flag("from") && !STEPS.some(([key]) => key === from)) {
+      throw new StepError("--from 必须指定一个有效步骤", { code: EXIT.BAD_INPUT });
+    }
     let started = !from;
     for (const step of STEPS) {
       if (!started && step[0] === from) started = true;
@@ -707,7 +731,7 @@ async function main() {
     console.log("用法：node kit/scripts/setup.mjs init|plan|status|all|confirm|<步骤>\n步骤：" + STEPS.map(([k]) => k).join(", "));
     return EXIT.BAD_INPUT;
   }
-  if (cmd !== "deps") loadConfig();
+  if (!["deps", "build"].includes(cmd)) loadConfig(); // 这两步不读配置：全新克隆（含 CI）可直接运行
   await runStep(step);
 }
 

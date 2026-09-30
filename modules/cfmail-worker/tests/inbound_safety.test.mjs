@@ -49,6 +49,7 @@ function makeEnv({ mailboxes = [], domains = ["example.com"], fail = {} } = {}) 
           _b: [],
           bind(...a) { this._b = a; return this },
           async first() {
+            if (sql.includes("FROM mail_settings")) return { value: "auto" };
             if (sql.includes("FROM mailboxes")) {
               if (fail.readMailbox) throw new Error("D1 read hiccup");
               const e = String(this._b[0] || "").toLowerCase();

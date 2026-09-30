@@ -25,6 +25,8 @@
  *                         此时只需要两把 CFMAIL 密钥，不需要登录三件套。
  */
 
+import { checkLoginRateLimit } from "./login-rate-limit.mjs";
+
 const COOKIE = "mh_session";
 const SESSION_HOURS = 24 * 14; // 两周免登录；过期只需重新输一次
 
@@ -121,6 +123,14 @@ async function authed(request, env, url) {
   return verifySession(env, readCookie(request, COOKIE));
 }
 
+function cloudWriteAllowed(request, url) {
+  if (["GET", "HEAD"].includes(request.method)) return true;
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site && site !== "same-origin" && site !== "none") return false;
+  const origin = request.headers.get("Origin");
+  return !origin || origin === url.origin;
+}
+
 /* ── 代理到 CFMail ──────────────────────────────────────── */
 
 async function proxyToCfmail(request, env, url) {
@@ -175,6 +185,20 @@ export default {
 
     // ── 登录 ──
     if (url.pathname === "/auth/login" && request.method === "POST") {
+      if (!localNoLogin(env, url)) {
+        try {
+          const retryAfter = await checkLoginRateLimit(request, env);
+          if (retryAfter) {
+            return json({ ok: false, code: "LOGIN_RATE_LIMITED", retry_after: retryAfter,
+              error: "登录尝试过于频繁，请稍后再试" }, 429,
+            { "retry-after": String(retryAfter), "cache-control": "no-store" });
+          }
+        } catch {
+          // Fail closed if shared protection cannot be checked.
+          return json({ ok: false, code: "LOGIN_PROTECTION_UNAVAILABLE",
+            error: "登录保护暂不可用，请稍后重试" }, 503, { "cache-control": "no-store" });
+        }
+      }
       let body = {};
       try { body = await request.json(); } catch { /* 非 JSON 当空处理 */ }
 
@@ -184,10 +208,10 @@ export default {
       // 两者都用定长比较；失败信息统一，不区分「用户不存在」与「密码错」，
       // 免得帮攻击者做用户名枚举。
       const normUser = (s) => String(s ?? "").trim().toLowerCase();
-      const ok = safeEqual(normUser(body.username), normUser(env.APP_USER)) &&
-                 safeEqual(body.password, env.APP_PASSWORD);
+      const ok = safeEqual(normUser(body?.username), normUser(env.APP_USER)) &&
+                 safeEqual(body?.password, env.APP_PASSWORD);
       if (!ok) {
-        // 轻微延时，抬高在线爆破成本（Worker CPU 时间很便宜，用户几乎无感）
+        // Small supplementary delay; the shared counter above enforces the limit.
         await new Promise((r) => setTimeout(r, 600));
         return json({ ok: false, error: "用户名或密码不对" }, 401);
       }
@@ -215,6 +239,9 @@ export default {
         return json({ ok: false, error: "未登录" }, 401, { "cache-control": "no-store" });
       }
       if (localNoLogin(env, url) && !localWriteAllowed(request, url)) {
+        return json({ ok: false, error: "拒绝跨站请求" }, 403, { "cache-control": "no-store" });
+      }
+      if (!localNoLogin(env, url) && !cloudWriteAllowed(request, url)) {
         return json({ ok: false, error: "拒绝跨站请求" }, 403, { "cache-control": "no-store" });
       }
       return proxyToCfmail(request, env, url);

@@ -72,7 +72,7 @@ export function useUpstreams() {
 
   const upstreams = data?.upstreams || []
   const allOk = state === 'ready' && upstreams.every((u) => u.ok)
-  // undefined = 还没探测出来；false = 线上 Worker 是旧版（收件箱会漏信）
+  // undefined = 还没探测出来；false = Worker 未提供完整邮箱列表能力
   const workerDiscovery = data?.worker_discovery
   return { data, upstreams, state, allOk, workerDiscovery, reload: load }
 }
@@ -86,8 +86,7 @@ export function UpstreamBar({ upstreams, state, onRetry, workerDiscovery, classN
         {t('up.title')}
       </span>
       {state === 'loading' && <Spinner size={14} className="text-muted" />}
-      {/* 「Worker 旧版」只是本地版才有的概念（本地要探线上 Worker 是哪一版）。
-          云端版本身就跑在线上、直连 CFMail，挂这个标签只会让人困惑。 */}
+      {/* 本地版会探测线上 Worker 的邮箱列表能力；云端版直连同一套 CFMail。 */}
       {!IS_CLOUD && state === 'ready' && workerDiscovery === false && (
         <span
           title={t('up.worker.legacy.hint')}

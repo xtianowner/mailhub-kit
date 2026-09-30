@@ -53,6 +53,8 @@ __RAW_PARSER__
 
 __MAILBOX_REGISTRY__
 
+__MAIL_SECURITY__
+
 function randomString(length = 6) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
@@ -95,10 +97,15 @@ export default {
       /* 同上 */
     }
 
-    // ── 以下每一步都只是「增强」：失败一律降级，绝不阻断落库 ──────────────
-    let mailboxId = FALLBACK_MAILBOX_ID;
+    const recipient = await checkInboundRecipient(env, mailTo);
+    if (!recipient.allowed) {
+      message.setReject("Recipient is not registered or is disabled");
+      return;
+    }
+
+    let mailboxId = recipient.mailboxId || FALLBACK_MAILBOX_ID;
     try {
-      mailboxId = await ensureMailboxId(env, mailTo);
+      if (!recipient.mailboxId) mailboxId = await ensureMailboxId(env, mailTo);
     } catch (error) {
       // ensureMailboxId 内部已兜底，这里是第二层保险
       console.log(
@@ -166,6 +173,7 @@ export default {
         template.replace("__VERIFIER__", verifier)
         .replace("__RAW_PARSER__", raw_parser)
         .replace("__MAILBOX_REGISTRY__", load_mailbox_registry())
+        .replace("__MAIL_SECURITY__", strip_exports((SRC_DIR / "mail_security.mjs").read_text()))
     )
 
 
@@ -175,6 +183,7 @@ def build_mail_api_dashboard() -> str:
     src = src.replace('import { htmlToText, normalizeText } from "./verification_extractor.mjs";\n', "")
     src = src.replace('import { loadInlineImages } from "./mail_attachments.mjs";\n', "")
     src = src.replace('import { getSendingStatus, sendDomainMail, SendMailError } from "./mail_send.mjs";\n', "")
+    src = src.replace('import { getReceiveMode, setReceiveMode, RECEIVE_MODES } from "./mail_security.mjs";\n', "")
     return (
         "// Cloudflare Dashboard 直贴版：mail-api\n"
         "// 用途：直接粘贴到 Cloudflare HTTP Worker（mail-api）\n"
@@ -184,6 +193,8 @@ def build_mail_api_dashboard() -> str:
         + load_mail_attachments()
         + "\n\n"
         + load_mail_send()
+        + "\n\n"
+        + strip_exports((SRC_DIR / "mail_security.mjs").read_text())
         + "\n\n"
         + src
     )
