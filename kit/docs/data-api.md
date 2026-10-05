@@ -24,7 +24,7 @@
 | GET | `/admin/mailboxes` | `q` `limit` `offset` | 全部信箱（含来信时自动创建的） |
 | POST | `/admin/new_address` | JSON `{name, domain}` | 登记信箱；同地址补登记保留 ID 与邮件，不给 `name` 则随机生成 |
 | POST | `/admin/mailboxes/meta` | JSON `{email, label, group}` | 修改信箱的备注和分组 |
-| GET | `/admin/messages/recent` | `q` `limit` `offset` `only_codes=1` | 跨所有信箱、按时间倒序的邮件列表（不含完整正文） |
+| GET | `/admin/messages/recent` | `q` `limit` `offset` `only_codes=1` `group` | 跨所有信箱、按时间倒序的邮件列表（不含完整正文）。`group` 去首尾空白后精确匹配信箱分组，空值不过滤 |
 | GET | `/admin/mails` | `address` `limit` `offset` | 某个信箱的邮件 |
 | GET | `/admin/message` | `id` | 单封邮件全文（文本、HTML、附件信息） |
 | GET | `/api/mailboxes/code` | `email` `password` | 该信箱最新一封邮件里的验证码和链接 |

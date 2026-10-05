@@ -235,6 +235,13 @@ export default {
 
     // ── 数据接口：必须已登录 ──
     if (url.pathname.startsWith("/admin/") || url.pathname.startsWith("/api/")) {
+      // 只接受 fetch / XHR（Sec-Fetch-Dest: empty）和不带该头的命令行客户端。
+      // 邮件正文 iframe 开了 allow-same-origin（为了适应宽度），Safari / Firefox 不支持 credentialless，
+      // 恶意邮件里指向本站接口的 <img> 会带着登录 Cookie 来；读不到数据，但会白白消耗 D1 读取额度。
+      const dest = request.headers.get("Sec-Fetch-Dest");
+      if (dest && dest !== "empty") {
+        return json({ ok: false, error: "数据接口只接受页面脚本请求" }, 403, { "cache-control": "no-store" });
+      }
       if (!(await authed(request, env, url))) {
         return json({ ok: false, error: "未登录" }, 401, { "cache-control": "no-store" });
       }

@@ -34,6 +34,33 @@ test("字母数字混合码仍然认得", () => {
   assert.equal(pick("Your code", "Your code is A1B2C3"), "A1B2C3");
 });
 
+// 2026-10-05：提取结果曾被统一 toUpperCase()，区分大小写的码（aB3dE9）被改坏成
+// AB3DE9，用户照抄必然输错。码必须原样返回；只有内部比较（日期、邮箱地址判断）忽略大小写。
+test("验证码保持原始大小写，不能被改成全大写", () => {
+  assert.equal(pick("Your code", "Your verification code is aB3dE9"), "aB3dE9");
+  assert.equal(pick("Your code", "Your code is a1b2c3"), "a1b2c3");
+  assert.equal(
+    pick("Sign in", "Enter this code to sign in:\n\n  xK7pQ2\n\nExpires in 10 minutes."),
+    "xK7pQ2",
+  );
+  assert.equal(pick("验证码", "您的验证码是 Ab12Cd，5分钟内有效。"), "Ab12Cd");
+});
+
+// 「code is <混合码>」且同一行有网址时，行级候选被网址扣分、行内模式又不认 "is"，码会被整体丢掉。
+test("「code is」后的字母数字混合码，同一行有网址也认得", () => {
+  assert.equal(pick("Your code", "Your code is A1B2C3. Visit https://example.com/verify to continue."), "A1B2C3");
+  assert.equal(pick("Your code", "Your code is aB3dE9. Visit https://example.com/verify to continue."), "aB3dE9");
+  // 「code is」后面跟普通单词时不能硬凑成码
+  assert.equal(pick("Newsletter", "This code is valid for everyone. See https://example.com"), null);
+});
+
+test("邮箱地址里的 token 仍按忽略大小写排除", () => {
+  assert.equal(
+    pick("Your code", "Sent to Ab12cd@example.com\nYour verification code is 482913"),
+    "482913",
+  );
+});
+
 test("纯字母词一律不再当验证码", () => {
   for (const word of ["YOUR", "CODE", "LOGIN", "EMAIL", "VERIFY", "ZWNJ"]) {
     const got = pick("Your verification code", `Please ${word} to continue.`);

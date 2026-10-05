@@ -1,20 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <title>mail-hub</title>
-  <!-- 站点图标。圆角方块用应用品牌渐变（tokens.css 的 gradient：135deg #8B5CF6 到 #22D3EE）；
-       信箱字形取自 lucide-react v0.468.0 的 mailbox（与页头 logo 同一字形，路径原样拷贝）。
-       字形色 #0A0A0B 与页头一致。stroke-width 按缩放倍率反算，保证 16px 标签页里线条不糊。
-       注意：本文件是 XML，注释里绝不能出现双连字符（写 CSS 变量名会直接让整个图标解析失败）。 -->
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8B5CF6"/>
-      <stop offset="1" stop-color="#22D3EE"/>
-    </linearGradient>
-  </defs>
-  <rect width="32" height="32" rx="7.5" fill="url(#g)"/>
-  <g transform="translate(5.6 5.6) scale(0.866)"
-     fill="none" stroke="#0A0A0B" stroke-width="2.6"
-     stroke-linecap="round" stroke-linejoin="round">
+  <!-- 站点图标（2026-10-05 按视觉基线 v1 改青绿，Tian 选定延续原信箱字形）。
+       圆角方块用基线主色 #0D9488（rgb 13 148 136）；信箱字形取自 lucide-react v0.468.0 的 mailbox，路径原样拷贝，
+       与页头 logo 同一字形，白色描边。stroke-width 3.2 是 16px 标签页对照后的取值：原 2.6 在 16px 下糊成一团。
+       注意：本文件是 XML，注释里绝不能出现双连字符（写 CSS 变量名会直接让整个文件解析失败，见 LESSONS L22）。 -->
+  <rect width="32" height="32" rx="7.5" fill="#0D9488"/>
+  <g transform="translate(5.6 5.6) scale(0.866)" fill="none" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M22 17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9.5C2 7 4 5 6.5 5H18c2.2 0 4 1.8 4 4v8Z"/>
     <polyline points="15,9 18,9 18,11"/>
     <path d="M6.5 5C9 5 11 7 11 9.5V17a2 2 0 0 1-2 2"/>

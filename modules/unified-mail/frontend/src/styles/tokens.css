@@ -1,85 +1,84 @@
-/* Frontend Design System — canonical design tokens (SINGLE SOURCE OF TRUTH for values).
-   改动设计变量只改这里；design-system.md §2 同步人读说明。 */
+/* MailHub 设计变量 —— 按「视觉基线 v1.2」（Tian 个人体系，青绿风格）。
+   数值单一真相源：blog/src/styles/global.css；对外说明：blog/docs/design/1005-1546-视觉基线-v1.md。
+   颜色一律写成**空格分隔**的 RGB 三元组（基线 §2.1 的 Tailwind 例外）：不透明写 rgb(var(--accent))，
+   半透明写 rgb(var(--accent) / 0.12)。本项目只用这一种写法，不和逗号写法混用（混用是非法颜色，整条声明失效）。
+   Tailwind 的 bg-accent/10 这类写法由 tailwind.config.js 映射成 rgb(var(--accent) / 0.1)，组件里不写裸色值。
+   浅色是默认，深色只覆盖同名变量，组件零改动。 */
 :root {
-  /* ===== Dark theme (default) ===== */
-  --bg: #09090B;
-  --surface: #131316;
-  --surface-2: #1C1C20;
-  --border: #27272A;
-  --text: #FAFAFA;          /* ≈19:1 on --bg */
-  --text-muted: #A1A1AA;    /* ≈7.8:1 on --bg */
-  --text-subtle: #71717A;   /* ≈4.1:1 — large/decorative only */
-  --accent: #8B5CF6;        /* violet-500 — primary, ≈4.7:1 on --bg (just clears AA-normal; NOT on lighter surfaces) */
-  --accent-hover: #A78BFA;
-  --accent-2: #22D3EE;      /* cyan-400 — secondary / gradient */
-  --accent-fg: #FFFFFF;     /* white — ONLY on SOLID --accent w/ large+bold text */
-  --on-bright: #0A0A0B;     /* constant dark text for bright/gradient buttons — theme-independent (NOT overridden in light) */
-  --gradient: linear-gradient(135deg, #8B5CF6 0%, #22D3EE 100%);
-  --glow: 0 0 40px -10px var(--accent);
+  /* ===== §2.1 基础 token（逐字照抄，浅色）===== */
+  --bg: 253 253 252;
+  --bg-elev: 255 255 255;
+  --bg-tint: 246 248 250;
+  --heading: 13 17 23;
+  --text: 45 51 59;
+  --muted: 96 105 118;
+  --border: 224 228 234;
+  --accent: 13 148 136;
+  --accent-strong: 15 118 110;
+  --shadow: 0 1px 2px rgb(13 17 23 / 0.04), 0 8px 24px rgb(13 17 23 / 0.06);
+  --shadow-lift: 0 2px 4px rgb(13 17 23 / 0.06), 0 14px 40px rgb(13 17 23 / 0.12);
 
-  /* ===== Atmosphere background system (§3.5) — layered like top-tier dark UIs (Linear/Vercel/Stripe/Framer):
-     color field + structural pattern + grain + vignette. Composite & theme-aware (reference
-     --accent/--accent-2/--bg/--text → 定义一次即双主题自适应). Pure CSS, zero-dep; only optional
-     aurora pan animates, frozen automatically by the global prefers-reduced-motion rule. */
+  /* ===== §2.2 状态色（成功直接用主色）===== */
+  --warning: 180 83 9;
+  --danger: 220 38 38;
+  --success: var(--accent);
 
-  /* —— color field —— */
-  --bg-glow: radial-gradient(58% 50% at 50% -8%, color-mix(in srgb, var(--accent) 34%, transparent) 0%, transparent 70%);
-  --bg-mesh:
-    radial-gradient(38% 48% at 8% 6%,   color-mix(in srgb, var(--accent) 30%, transparent) 0%, transparent 70%),
-    radial-gradient(34% 44% at 92% 2%,  color-mix(in srgb, var(--accent-2) 26%, transparent) 0%, transparent 66%),
-    radial-gradient(46% 52% at 86% 94%, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 74%),
-    radial-gradient(52% 52% at 22% 104%,color-mix(in srgb, var(--accent-2) 15%, transparent) 0%, transparent 72%);
-  --bg-aurora:        /* animated (bd-animate) zero-dep alternative to WebGL Aurora */
-    radial-gradient(42% 60% at 22% 28%, color-mix(in srgb, var(--accent) 40%, transparent) 0%, transparent 60%),
-    radial-gradient(40% 56% at 78% 22%, color-mix(in srgb, var(--accent-2) 34%, transparent) 0%, transparent 60%),
-    radial-gradient(54% 60% at 62% 96%, color-mix(in srgb, var(--accent) 30%, transparent) 0%, transparent 64%),
-    radial-gradient(60% 70% at 12% 88%, color-mix(in srgb, var(--accent-2) 22%, transparent) 0%, transparent 66%);
+  /* ===== 派生用法（只引用上面的 token，不引入新色相）=====
+     基线 --accent 在浅底上只有 3.7:1，白字压在它上面也只有 3.7:1，都过不了正文 AA（4.5:1）。
+     所以浅色下「小字 / 链接」和「主按钮底」改用同一色系的 --accent-strong（5.4:1）；深色下
+     --accent 本身就有 12:1，直接用。描边、焦点环、选中底色这类非文字元素仍用 --accent（≥3:1 即可）。 */
+  --accent-ink: var(--accent-strong);
+  --accent-fill: var(--accent-strong);
+  /* 基线 v1.1 §2.1：浅色主按钮悬停加深到 #115E59（白字 7.58:1）。完整颜色值，不是三元组 */
+  --accent-fill-hover: #115e59;
+  --on-accent: 255 255 255;
+  --info: var(--muted); /* 基线没有信息色：中性灰承担「提示 / 次要来源」 */
 
-  /* —— structural pattern (faded toward edges by --grid-mask so it reads engineered, not cheap) —— */
-  --grid-size: 56px;
-  --bg-grid:
-    linear-gradient(to right,  color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px);
-  --bg-dots: radial-gradient(color-mix(in srgb, var(--text) 10%, transparent) 1px, transparent 1.5px);
-  --grid-mask: radial-gradient(ellipse 78% 72% at 50% 32%, #000 0%, rgba(0,0,0,0.72) 45%, transparent 80%);
+  /* ===== MailHub 专属（只取基线 §2.3 辅助色块的值，不引入新色相）=====
+     来源色：域名邮箱 = 主色青绿；Hotmail = 粉蓝。浅色主题取深档 #075985、深色主题取浅档 #D9EDFB，
+     保证来源色点压在页面底上 ≥3:1（非文字元素的要求）。
+     信封纸色：杏色。信封是「物件」，两种主题下保持同一个纸色。 */
+  --src-hotmail: 7 89 133;
+  --paper: 252 233 200;
+  --paper-flap: 246 220 178;
+  --paper-edge: 146 64 14;
+  --ink-shadow: 13 17 23;
+  /* 插画里的「物件」色（两种主题不变）：信纸白、纸上的青绿墨（= 浅色 --accent-strong）、展示台侧面（深一档青绿） */
+  --paper-letter: 255 255 255;
+  --paper-ink: 15 118 110;
+  --base-side: 15 118 110;
+  --top-h: 56px; /* 顶栏高度：侧栏 sticky、锚点留白都按它算 */
+  /* 悬停聚光的主色浓度（列表行 / 卡片）。上限按「聚光最亮处压在 --muted 小字下面仍 ≥ 4.5:1」实测定：
+     浅色 行 0.10 → 4.65:1、卡片 0.16 → 4.61:1（统计卡 0.05 → 危险色小字 4.54:1）；深色 bg-tint 上叠 0.10 只有 3.99:1，所以深色降到 0.04 / 0.05（4.63 / 5.07:1） */
+  --spot-row: 0.1;
+  --spot-card: 0.16;
+  /* 统计卡里有 12px 的警告 / 危险色小字（快过期、已过期计数），聚光超过 5% 就压到 4.5:1 以下 */
+  --spot-stat: 0.05;
 
-  /* —— grain — SVG fractalNoise; kills gradient banding + adds premium tactile depth —— */
-  --bg-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  --grain-opacity: 0.05;
+  /* ===== §4 形状 ===== */
+  --radius-card: 12px; /* 卡片、面板、弹层 */
+  --radius-field: 6px; /* 输入框、小标签、代码块 */
+  --radius-pill: 999px; /* 按钮、胶囊标签、开关 */
 
-  /* —— vignette — edge darkening toward --bg for depth/focus —— */
-  --bg-vignette: radial-gradient(120% 110% at 50% -6%, transparent 52%, color-mix(in srgb, var(--bg) 82%, transparent) 100%);
+  /* ===== §5 动效 ===== */
+  --dur: 0.45s;
+  --dur-fast: 0.15s; /* 按下、开关这类小交互 */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
-  --scrim: linear-gradient(to top, var(--bg) 0%, color-mix(in srgb, var(--bg) 55%, transparent) 45%, transparent 100%);
+  /* ===== §3 字体（Atkinson 自托管，见 index.css @font-face；中文回落系统字体）===== */
+  --font-sans: 'Atkinson', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* semantic */
-  --success: #22C55E;
-  --warning: #F59E0B;
-  --danger:  #EF4444;
-  --info:    #3B82F6;
+  /* ===== §6 页面外框：1440 宽两侧约 80px，1024 约 40px，手机 16px；内容最宽 1280px ===== */
+  --frame-pad: clamp(16px, 9.62vw - 58.5px, 80px);
+  --frame-max: 1280px;
 
-  /* radius */
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
-  --radius-full: 9999px;
+  /* 原生控件（单选圈、复选框、下拉、滚动条）跟随主题：浅色声明 light，深色在下面覆盖为 dark。
+     不声明时深色模式下未选中的单选 / 复选框是白色实心块。 */
+  color-scheme: light;
 
-  /* motion */
-  --dur-fast: 150ms;
-  --dur-base: 250ms;
-  --dur-slow: 400ms;
-  --dur-slower: 600ms;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
-  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
-
-  /* fonts */
-  --font-heading: 'Outfit', ui-sans-serif, system-ui, sans-serif;
-  --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-
-  /* z-index scale */
+  /* z-index 层级 */
   --z-dropdown: 10;
   --z-sticky: 20;
   --z-overlay: 30;
@@ -87,34 +86,41 @@
   --z-toast: 50;
 }
 
-[data-theme="light"] {
-  /* off-white 冷调底板（脱离死白，更有设计质感）+ 纯白卡片浮起 —— 参考 Linear/Stripe 浅色 */
-  --bg: #F5F6F8;            /* 底板：微冷 off-white（非 #FFF） */
-  --surface: #FFFFFF;       /* 卡片：纯白浮于底板之上 */
-  --surface-2: #EDEFF3;
-  --border: #E2E5EA;
-  --text: #09090B;          /* ≈17.5:1 on --bg */
-  --text-muted: #52525B;    /* ≈6.7:1 on --bg */
-  --text-subtle: #6B6B73;   /* 大字/装饰 */
-  --accent: #7C3AED;
-  --accent-hover: #6D28D9;
-  --accent-fg: #FFFFFF;
-  /* 注意：--gradient 与 --accent-2 有意【不】在浅色覆盖 —— 品牌签名渐变(violet→cyan)两主题恒定，
-     与 --on-bright 同理。亮底/渐变上始终用 text-on-bright 保对比；--accent-2 勿作浅底前景独立色用。 */
-  --glow: 0 10px 40px -12px rgba(124, 58, 237, 0.35);
-  /* Light-theme semantic colors: the bright dark-mode values (e.g. #22C55E) read ~2:1 as bold
-     pill text on white. Darkened here for legibility on the off-white surface while staying
-     recognisably green/amber/red/blue. Used as status-badge text + dot/border tints. */
-  --success: #15803D;  /* green-700  ≈ 5.0:1 on #FFF */
-  --warning: #B45309;  /* amber-700  ≈ 5.0:1 on #FFF */
-  --danger:  #DC2626;  /* red-600    ≈ 4.8:1 on #FFF */
-  --info:    #1D4ED8;  /* blue-700   ≈ 6.3:1 on #FFF */
-  /* white base needs a whisper-faint grain (overlay over white is harsher) + softer vignette */
-  --grain-opacity: 0.03;
-  --bg-vignette: radial-gradient(120% 110% at 50% -6%, transparent 58%, color-mix(in srgb, #0A0A0B 7%, transparent) 100%);
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* ===== §2.1 基础 token（逐字照抄，深色）===== */
+  --bg: 13 17 23;
+  --bg-elev: 22 27 34;
+  --bg-tint: 30 36 46;
+  --heading: 230 237 243;
+  --text: 201 209 217;
+  --muted: 139 148 158;
+  --border: 43 50 60;
+  --accent: 94 234 212;
+  --accent-strong: 153 246 228;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 30px rgb(0 0 0 / 0.5);
+  --shadow-lift: 0 2px 4px rgb(0 0 0 / 0.45), 0 18px 48px rgb(0 0 0 / 0.6);
+
+  /* ===== §2.2 状态色（深色）===== */
+  --warning: 251 191 36;
+  --danger: 248 113 113;
+
+  /* ===== 派生：深色下主色本身够亮，主按钮用深色字（§7） ===== */
+  --accent-ink: var(--accent);
+  --accent-fill: var(--accent);
+  --accent-fill-hover: rgb(var(--accent-strong));
+  --on-accent: var(--bg);
+
+  /* ===== MailHub 专属（深色）===== */
+  --src-hotmail: 217 237 251;
+  --ink-shadow: 0 0 0;
+  --spot-row: 0.04;
+  --spot-card: 0.05;
+  --base-side: 17 94 89;
 }
 
-/* Accessibility: honor reduced motion globally */
+/* §5：开启「减少动态效果」时关掉位移、缩放与动画，只保留颜色 / 透明度的即时变化 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;

@@ -18,11 +18,12 @@ export function fmtDate(iso) {
 }
 
 // Relative "x ago" — compact, locale-aware via zh/en token strings passed in.
-export function fmtRelative(iso, locale = 'zh') {
+// now：可选的「现在」。列表按固定节拍传同一个 now，相对时间就不会在无关的重渲染里悄悄变化。
+export function fmtRelative(iso, locale = 'zh', now = Date.now()) {
   if (!iso) return null
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return null
-  const sec = Math.round((Date.now() - d.getTime()) / 1000)
+  const sec = Math.round((now - d.getTime()) / 1000)
   const units = [
     [60, 'sec'],
     [3600, 'min'],

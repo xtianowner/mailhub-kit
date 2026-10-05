@@ -4,7 +4,7 @@
 
 **把这个仓库交给你的 AI 编程工具（Claude Code / Codex / Hermes），它会在你自己的 Cloudflare 免费账号上，从零搭好一套域名邮箱，搭到你亲自确认能用为止。**
 
-![统一收件箱](kit/docs/screenshots/01-inbox.png)
+![统一总览：所有域名的信汇成一条时间线](kit/docs/screenshots/01-overview.png)
 
 你会得到：
 
@@ -18,19 +18,17 @@
 
 > 截图用的是示例数据（`example.org` 下的虚构信箱与邮件）。界面和你搭好后看到的一致。
 
-| 一键接码：填地址，取最新验证码 | 域名邮箱：新建、备注、分组、看信 |
+| 域名邮箱：每个域名一张卡 | 进入域名：新建、备注、分组、接码、看信 |
 |---|---|
-| ![接码](kit/docs/screenshots/02-code.png) | ![域名邮箱](kit/docs/screenshots/03-mailboxes.png) |
-| **邮件详情：验证码置顶，点击即复制** | **总览：信箱数、最新动态** |
-| ![邮件详情](kit/docs/screenshots/04-message.png) | ![总览](kit/docs/screenshots/05-overview.png) |
-| **云端登录页：账号密码保护** | **深色模式** |
-| ![登录](kit/docs/screenshots/06-login.png) | ![深色模式](kit/docs/screenshots/07-inbox-dark.png) |
+| ![域名邮箱](kit/docs/screenshots/02-mailboxes.png) | ![信箱列表](kit/docs/screenshots/03-mailbox-list.png) |
+| **邮件详情：右侧抽屉，验证码置顶一点即复制；正文可缩放、可全屏** | **云端登录页：账号密码保护** |
+| ![邮件详情](kit/docs/screenshots/04-message.png) | ![登录](kit/docs/screenshots/05-login.png) |
+| **深色模式** | **设置：收信模式一键切换** |
+| ![深色模式](kit/docs/screenshots/06-overview-dark.png) | ![设置：收信模式](kit/docs/screenshots/08-settings.png) |
 
-<p align="center"><img src="kit/docs/screenshots/08-mobile.png" alt="手机上的收件箱" width="300"><br><sub>手机上同样好用</sub></p>
+<p align="center"><img src="kit/docs/screenshots/07-mobile.png" alt="手机上的统一总览" width="300"><br><sub>手机上同样好用</sub></p>
 
-**设置：收信模式一键切换**。默认只收登记过的地址；需要任意名字都能直接收时，切到自动模式。
-
-![设置：收信模式](kit/docs/screenshots/09-settings.png)
+总览顶部是「汇流」动画：各个域名的来信像光点一样流进中间的枢纽；下面是可搜索、可按分组筛选、可选 10 / 20 / 50 / 100 封的最近邮件时间线，新邮件到达时会有一个信封落下的小动画。收信模式默认只收登记过的地址；需要任意名字都能直接收时，在设置里切到自动模式。
 
 ## 你需要准备
 
@@ -75,8 +73,8 @@ AI 会先把自己注册成 `mailhub-setup` 技能，然后**一次性问你几�
 | 停止本地版 | 运行 `./stop.sh`（Windows：双击 `stop.cmd`） |
 | 切换收信模式 | 设置 → 收信模式 → 登记后收信 / 自动模式 → 保存；云端与本地共同生效 |
 | 登记邮箱 | 域名邮箱 → 新建；自动模式建出来的地址可点「登记」，已有邮件保留 |
-| 改登录密码 | `node kit/scripts/set-login.mjs` |
-| 更新到新版本 | 跟你的 AI 说「把我的邮箱套件更新到最新版」。已有邮件、设置和密钥都会保留；从旧版升级时，原来「任意前缀自动收信」的行为不变 |
+| 改登录密码 | 运行搭建完成时交付信息里那条「改登录密码」命令；或在项目根运行 `sh kit/scripts/node.sh kit/scripts/set-login.mjs`（Windows PowerShell：`powershell -ExecutionPolicy Bypass -File kit\scripts\node.ps1 kit/scripts/set-login.mjs`）。两种都用搭建时记录的 Node |
+| 更新到新版本 | 跟你的 AI 说「把我的邮箱套件更新到最新版」。已有邮件、设置和密钥都会保留；每版改了什么见 [CHANGELOG.md](CHANGELOG.md) |
 | 其它事 | 跟你的 AI 说，比如「启动我的邮箱」「邮箱收不到信了帮我查一下」 |
 
 ## 费用

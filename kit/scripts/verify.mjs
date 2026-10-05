@@ -29,61 +29,61 @@ export async function runChecks({ print = true } = {}) {
     ["数据接口在线", async () => {
       const r = await get(api + "/");
       return [r.status === 200 && r.json?.ok === true, `HTTP ${r.status}`];
-    }],
+    }, "刚部署完证书可能还在签发：过 2–3 分钟重跑 verify；仍失败就重跑 deploy-api"],
     ["数据接口认得你的域名", async () => {
       const r = await get(api + "/admin/domains", admin);
       return [Boolean(r.json?.domains?.includes(cfg.domain)), `domains=${JSON.stringify(r.json?.domains ?? r.status)}`];
-    }],
+    }, "重跑 d1（会登记域名），再重跑 verify"],
     ["登录网页可打开", async () => {
       const r = await get(web + "/");
       return [r.status === 200 && r.type.includes("text/html"), `HTTP ${r.status}`];
-    }],
+    }, "刚部署完证书可能还在签发：过 2–3 分钟重跑 verify；仍失败就重跑 deploy-web"],
     ["收信模式可读取且有效", async () => {
       const r = await get(api + "/admin/settings/receiving", admin);
       const mode = r.json?.receive_mode;
       return [r.status === 200 && ["registered", "auto"].includes(mode),
         mode === "auto" ? "auto（任意地址收信；如需限制，请在设置切回登记模式）" : `HTTP ${r.status} mode=${mode ?? "缺失（检查迁移与 API 部署）"}`];
-    }],
+    }, "先重跑 d1（补齐数据库升级），再重跑 deploy-api"],
     ["未授权不能读取收信设置", async () => {
       const r = await get(api + "/admin/settings/receiving");
       return [r.status === 401, `HTTP ${r.status}（应为 401）`];
-    }],
+    }, "安全检查没过：重跑 deploy-api；仍失败就停下，如实告诉用户，不要设法绕过"],
     ["未登录访问数据被拒绝", async () => {
       const r = await get(`${web}/admin/mailboxes?cachebust=${Date.now()}`);
       return [r.status === 401, `HTTP ${r.status}（应为 401）`];
-    }],
+    }, "安全检查没过：重跑 deploy-web；仍失败就停下，如实告诉用户，不要设法绕过"],
     ["登录网页配置完整（含登录密码）", async () => {
       const r = await get(`${web}/auth/status?cachebust=${Date.now()}`);
       return [r.status === 200 && r.json?.configured === true, r.status === 503 ? "缺登录密码等设置" : `HTTP ${r.status}`];
-    }],
+    }, "还没设登录密码就运行 password（SKILL 第 7 节）；已经设过就重跑 deploy-web"],
     ["收信路由已开启", async () => {
       const s = await routingSettings(zoneId);
       return [s?.enabled === true && s.status === "ready", `enabled=${s?.enabled} status=${s?.status}`];
-    }],
+    }, "重跑 routing；它提示要手动操作时，请用户在 Cloudflare 网页上开启 Email Routing"],
     ["任意前缀的来信交给收信 Worker", async () => {
       const r = await catchAllRule(zoneId);
       const a = r?.actions?.[0];
       return [Boolean(r?.enabled && a?.type === "worker" && a.value?.includes(n.inbox)), `${a?.type} → ${(a?.value || []).join(",")}`];
-    }],
+    }, `重跑 routing；它提示要手动操作时，请用户在 Cloudflare → Email Routing → Routing rules 把 Catch-all 设为 Send to a Worker → ${n.inbox}`],
     ["公网 MX 指向 Cloudflare", async () => {
       const mx = await lookupMx(cfg.domain);
       return [Boolean(mx?.length && mx.every(isCloudflareMx)), mx ? mx.join(", ") || "无 MX" : "查询失败"];
-    }],
+    }, "刚开启收信路由时，公网 DNS 还缓存着旧 MX（按旧记录的有效期，几分钟到几小时）：等一会儿再重跑 verify，不要反复重跑 routing。显示查询失败时按网络问题处理（SKILL 第 3 节）"],
     ["本地版运行中且免登录", async () => {
       if (!local) return [false, `未启动（${process.platform === "win32" ? "start.cmd" : "./start.sh"}）`];
       const r = await get(`http://127.0.0.1:${local.port}/auth/status`);
       return [r.json?.local === true && r.json?.authed === true, `http://127.0.0.1:${local.port}`];
-    }],
+    }, "运行 local 启动本地版；仍失败就看 node kit/scripts/local.mjs status 的输出"],
     ["本地版能读到云端数据", async () => {
       if (!local) return [false, "未启动"];
       const r = await get(`http://127.0.0.1:${local.port}/admin/domains`);
       return [Boolean(r.json?.domains?.includes(cfg.domain)), `HTTP ${r.status}`];
-    }],
+    }, "本地版可能还在用旧配置：先 node kit/scripts/local.mjs stop，再运行 local"],
   ];
 
   let allOk = true;
   if (print) console.log("\n   验收项                              结果   实际返回");
-  for (const [title, fn] of checks) {
+  for (const [title, fn, hint] of checks) {
     let ok = false;
     let detail = "";
     try {
@@ -93,10 +93,10 @@ export async function runChecks({ print = true } = {}) {
     }
     allOk &&= ok;
     if (print) console.log(`   ${ok ? "✅" : "❌"} ${title.padEnd(28, "　").slice(0, 28)} ${detail}`);
+    if (print && !ok) console.log(`      → 下一步：${hint}`);
   }
 
   if (print && allOk) {
-    const rel = (p) => path.relative(ROOT, p) || ".";
     console.log(`
 ────────── 交付信息（请原样告诉用户）──────────
 ☁️  云端登录网页：${web}
@@ -112,7 +112,7 @@ export async function runChecks({ print = true } = {}) {
 🔌 数据接口（二次开发用）：${api}
     密钥在本机 ${DEV_VARS}（CFMAIL_ADMIN_TOKEN / CFMAIL_SITE_PASSWORD）
     接口说明：${path.join(KIT, "docs", "data-api.md")}
-🔑 改登录密码：node ${rel(path.join(KIT, "scripts", "set-login.mjs"))}
+🔑 改登录密码（任意目录可执行）：${process.platform === "win32" ? "& " : ""}"${process.execPath}" "${path.join(KIT, "scripts", "set-login.mjs")}"
 ──────────────────────────────────────────────
 机器验收已全部通过。请用户亲自确认三件事，都没问题后执行 node kit/scripts/setup.mjs confirm：
   ① 用自己的密码登录云端网页   ② 发给 test@${cfg.domain} 的信在网页里看到了   ③ 本地版能打开`);

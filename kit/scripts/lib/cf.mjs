@@ -4,9 +4,12 @@ import { EXIT, StepError, parseJsonLoose, wrangler } from "./common.mjs";
 
 // 以下三个 MAILHUB_TEST_* 只给离线编排测试用（把 Cloudflare 换成本地假服务），正常使用不设。
 const API = process.env.MAILHUB_TEST_CF_API || "https://api.cloudflare.com/client/v4";
-const DOH_LIST = process.env.MAILHUB_TEST_DOH
-  ? [process.env.MAILHUB_TEST_DOH]
-  : ["https://cloudflare-dns.com/dns-query", "https://dns.google/resolve"];
+// 公共 DoH 依次尝试：前两个在中国大陆不开 TUN / 代理时基本连不上，后两个（阿里、腾讯）大陆可直连。
+// 只查公开记录；被篡改的最坏结果是误判「有冲突」而停下问用户，不会删改任何东西。
+// 不用系统 DNS 兜底：TUN 的 fake-ip 模式会对任何名字返回 198.18.x，导致误判。
+export const DOH_LIST = process.env.MAILHUB_TEST_DOH
+  ? process.env.MAILHUB_TEST_DOH.split(",")
+  : ["https://cloudflare-dns.com/dns-query", "https://dns.google/resolve", "https://dns.alidns.com/resolve", "https://doh.pub/resolve"];
 const REWRITE = JSON.parse(process.env.MAILHUB_TEST_REWRITE || "{}"); // { "https://mail.x.test": "http://127.0.0.1:1234" }
 
 let dispatcher;
@@ -107,7 +110,7 @@ export async function workerNames(accountId) {
 }
 
 /**
- * 公共 DoH 查记录。两个解析器依次尝试；都失败或返回错误状态时抛错 ——
+ * 公共 DoH 查记录。按 DOH_LIST 依次尝试；全部失败或返回错误状态时抛错 ——
  * 「查不到」绝不能当成「没有记录」，否则会把用户在用的邮箱 / 网站误判成空闲。
  */
 export async function lookupDns(name, type) {
@@ -115,7 +118,7 @@ export async function lookupDns(name, type) {
   const errors = [];
   for (const url of resolvers) {
     try {
-      const res = await fetchx(url, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(15_000) });
+      const res = await fetchx(url, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(6_000) });
       const body = await res.json();
       // Status 0 = NOERROR，3 = NXDOMAIN（名字不存在，等于没有记录）；其它都是查询失败。
       if (body.Status === 0 || body.Status === 3) {

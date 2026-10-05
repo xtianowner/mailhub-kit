@@ -1,5 +1,24 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import './tokens.css';
+@import './hub.css';
+@import './work.css';
+
+/* 字体自托管（基线 §3）：Atkinson 两档字重，随前端一起打包，不走 Google Fonts。
+   界面里的 medium / semibold 会按浏览器规则分别落到 400 / 700。 */
+@font-face {
+  font-family: 'Atkinson';
+  src: url('../assets/fonts/atkinson-regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Atkinson';
+  src: url('../assets/fonts/atkinson-bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 
 @tailwind base;
 @tailwind components;
@@ -10,46 +29,68 @@
     scroll-behavior: smooth;
   }
   body {
-    @apply bg-bg text-text font-body antialiased;
+    @apply bg-bg font-body text-text antialiased;
     margin: 0;
+    transition:
+      background-color var(--dur) var(--ease),
+      color var(--dur) var(--ease);
   }
   h1, h2, h3, h4 {
     @apply font-heading;
+    letter-spacing: -0.01em;
   }
+  /* 焦点环：主色描边 + 一圈底色光晕，压在任何底色上都看得见 */
   :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid rgb(var(--accent));
     outline-offset: 2px;
-    border-radius: var(--radius-sm);
-    /* --bg 光晕：在动态/渐变背景上也保证 focus ring 自身 ≥3:1 可见（不依赖背景对比） */
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--bg) 80%, transparent);
+    box-shadow: 0 0 0 5px rgb(var(--bg) / 0.8);
   }
 }
 
-/* Backdrop atmosphere layers — each fills its host (absolute inset-0). Bundled here because
-   mask/size/blend don't map to single Tailwind utilities. Toggled by <Backdrop/>; values in tokens.css. */
 @layer components {
-  .bd-glow    { background: var(--bg-glow); }
-  .bd-mesh    { background: var(--bg-mesh); }
-  .bd-aurora  { background: var(--bg-aurora); background-size: 200% 200%; background-position: 0% 50%; }
-  .bd-animate { animation: aurora-pan 26s var(--ease-inout) infinite alternate; }
-  .bd-grid {
-    background-image: var(--bg-grid);
-    background-size: var(--grid-size) var(--grid-size);
-    -webkit-mask: var(--grid-mask) center / cover no-repeat;
-            mask: var(--grid-mask) center / cover no-repeat;
+  /* 页面外框（基线 §6）：两侧留白随宽度平滑变化，内容最宽 1280px，更宽的屏幕两侧留白继续变大 */
+  .app-frame {
+    width: 100%;
+    max-width: calc(var(--frame-max) + 2 * var(--frame-pad));
+    margin-inline: auto;
+    padding-inline: var(--frame-pad);
   }
-  .bd-dots {
-    background-image: var(--bg-dots);
-    background-size: var(--grid-size) var(--grid-size);
-    -webkit-mask: var(--grid-mask) center / cover no-repeat;
-            mask: var(--grid-mask) center / cover no-repeat;
+
+  /* 可点的卡片：悬停阴影升一档；允许动效时再上浮 2px（基线 §4、§5） */
+  .card-lift {
+    transition:
+      transform var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease),
+      border-color var(--dur-fast) var(--ease);
   }
-  .bd-grain   { background-image: var(--bg-grain); opacity: var(--grain-opacity); mix-blend-mode: overlay; }
-  .bd-vignette{ background: var(--bg-vignette); }
+  .card-lift:hover {
+    box-shadow: var(--shadow-lift);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .card-lift:hover {
+      transform: translateY(-2px);
+    }
+  }
+
+  /* 弹层进场：允许动效时淡入 + 轻微上移；减少动态效果时只淡入（基线 §5） */
+  .overlay-in {
+    animation: overlay-in var(--dur) var(--ease) both;
+  }
+  .dialog-in {
+    animation: dialog-in var(--dur) var(--ease) both;
+  }
 }
 
-/* aurora drift — GPU-cheap background pan; the global prefers-reduced-motion rule freezes it. */
-@keyframes aurora-pan {
-  from { background-position: 0% 50%; }
-  to   { background-position: 100% 50%; }
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialog-in {
+    animation-name: overlay-in;
+  }
 }

@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Search, KeyRound, LogIn } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowUpRight, KeyRound, RotateCcw } from 'lucide-react'
 import { api } from '../lib/api.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
-import { Button, Badge, Card, CopyCode } from '../components/ui.jsx'
+import { PageHeader } from '../components/hub.jsx'
 import { Pager, PAGE_SIZE_OPTIONS } from '../components/Pager.jsx'
-import { StateBlock } from '../components/StateBlock.jsx'
+import { EmptyState } from '../components/EmptyState.jsx'
+import { EnvelopeSkeleton } from '../components/EnvelopeSkeleton.jsx'
+import { SearchCommand } from '../components/overview/SearchCommand.jsx'
+import { ActBtn, CodeCell, CopyAddr, StatusPill, rowSpotlight } from '../components/work.jsx'
 
+/* 别名管理（/hotmail/aliases）：集中查看与按别名接码。功能与改版前相同 ——
+   后端分页（每页 50 / 100 / 200，翻页条在表格上方）、按别名地址搜索、逐行定向接码、进入所属账号。
+   只换呈现：与 Hotmail 账号表同一套行样式（等宽地址点击复制、状态胶囊、验证码胶囊、悬停聚光）。 */
 export default function AliasesPage() {
   const { t } = useLocale()
   const toast = useToast()
@@ -18,17 +24,15 @@ export default function AliasesPage() {
   const rawSize = parseInt(params.get('size') || '50', 10)
   const pageSize = PAGE_SIZE_OPTIONS.includes(rawSize) ? rawSize : 50
 
-  const [searchInput, setSearchInput] = useState(q)
-  const [data, setData] = useState(null) // {rows,total,page,pages}
+  const [data, setData] = useState(null)
   const [listState, setListState] = useState('loading')
-  const [rowBusy, setRowBusy] = useState({}) // id -> true
-  const [rowCode, setRowCode] = useState({}) // id -> {found,code,message?,subject?}
+  const [rowBusy, setRowBusy] = useState({})
+  const [rowCode, setRowCode] = useState({})
 
   const load = useCallback(async () => {
-    setListState('loading')
+    setListState((s) => (s === 'ready' ? 'refreshing' : 'loading'))
     try {
-      const res = await api.aliases({ q: q || undefined, page, page_size: pageSize })
-      setData(res)
+      setData(await api.aliases({ q: q || undefined, page, page_size: pageSize }))
       setListState('ready')
     } catch {
       setListState('error')
@@ -38,9 +42,6 @@ export default function AliasesPage() {
   useEffect(() => {
     load()
   }, [load])
-  useEffect(() => {
-    setSearchInput(q)
-  }, [q])
 
   const setParam = (patch) => {
     const next = new URLSearchParams(params)
@@ -50,13 +51,8 @@ export default function AliasesPage() {
     }
     setParams(next, { replace: true })
   }
-
   const scrollTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
 
-  const onSearch = (e) => {
-    e?.preventDefault?.()
-    setParam({ q: searchInput.trim() || undefined, page: undefined })
-  }
   const onPage = (p) => {
     setParam({ page: p > 1 ? p : undefined })
     scrollTop()
@@ -66,176 +62,134 @@ export default function AliasesPage() {
     scrollTop()
   }
 
-  const onCode = async (alias) => {
-    setRowBusy((m) => ({ ...m, [alias.id]: true }))
-    try {
-      const res = await api.aliasCode(alias.id)
-      const subject = res.message?.subject ?? null
-      setRowCode((m) => ({ ...m, [alias.id]: { ...res, subject } }))
-      if (res.dead) toast.error(t('status.dead'))
-      else if (!res.found) toast.info(t('alias.none'))
-    } catch {
-      toast.error(t('common.error'))
-    } finally {
-      setRowBusy((m) => ({ ...m, [alias.id]: undefined }))
-    }
-  }
+  const onCode = useCallback(
+    async (alias) => {
+      setRowBusy((m) => ({ ...m, [alias.id]: true }))
+      try {
+        const res = await api.aliasCode(alias.id)
+        const subject = res.message?.subject ?? null
+        setRowCode((m) => ({ ...m, [alias.id]: { ...res, subject } }))
+        if (res.dead) toast.error(t('status.dead'))
+        else if (!res.found) toast.info(t('alias.none'))
+      } catch {
+        toast.error(t('common.error'))
+      } finally {
+        setRowBusy((m) => ({ ...m, [alias.id]: undefined }))
+      }
+    },
+    [t, toast],
+  )
 
   const rows = data?.rows || []
+  const spot = useMemo(() => rowSpotlight('.mh-lrow'), [])
+
+  let body
+  if (listState === 'loading') body = <EnvelopeSkeleton rows={6} label={t('common.loading')} />
+  else if (listState === 'error' && rows.length === 0)
+    body = (
+      <EmptyState
+        pose="search"
+        tone="danger"
+        icon={AlertTriangle}
+        title={t('common.error')}
+        action={
+          <button type="button" className="mh-btn mh-btn--ghost" onClick={load}>
+            <RotateCcw size={14} aria-hidden />
+            {t('common.retry')}
+          </button>
+        }
+      />
+    )
+  else if (rows.length === 0) body = <EmptyState pose="search" title={t('aliases.empty')} desc={q ? t('hm.aliases.emptyDesc') : undefined} />
+  else
+    body = (
+      <ul className={`mh-llist ${listState === 'refreshing' ? 'is-busy' : ''}`} onMouseMove={spot}>
+        {rows.map((alias) => (
+          <AliasRow key={alias.id} alias={alias} busy={rowBusy[alias.id]} code={rowCode[alias.id]} q={q} t={t} onCode={onCode} />
+        ))}
+      </ul>
+    )
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-xl font-semibold text-text">{t('aliases.title')}</h1>
-        <p className="text-sm text-muted">{t('aliases.subtitle')}</p>
-      </div>
+    <div className="mh-page">
+      <Link to="/hotmail" className="mh-btn mh-btn--quiet mh-btn--sm mh-self-start">
+        <ArrowLeft size={15} aria-hidden />
+        {t('hm.backToList')}
+      </Link>
+      <PageHeader title={t('aliases.title')} subtitle={t('aliases.subtitle')} />
 
-      <Card className="flex items-center gap-2 p-3">
-        <form onSubmit={onSearch} className="flex flex-1 gap-2">
-          <div className="relative flex-1">
-            <Search
-              size={15}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-subtle"
-            />
-            <input
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder={t('aliases.search.placeholder')}
-              className="h-10 w-full rounded border border-border bg-surface-2/60 pl-9 pr-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none"
-            />
+      <section className="mh-card mh-tool" aria-label={t('hm.aliases.tools')}>
+        <SearchCommand
+          compact
+          value={q}
+          onSearch={(v) => setParam({ q: v || undefined, page: undefined })}
+          placeholder={t('aliases.search.placeholder')}
+          label={t('overview.search')}
+        />
+      </section>
+
+      <section className="mh-card mh-atable mh-ltable" aria-labelledby="mh-al-title">
+        <header className="mh-atable__head">
+          <h2 id="mh-al-title" className="mh-h2">
+            {t('aliases.title')}
+          </h2>
+        </header>
+        <div className="mh-atable__pager">
+          <Pager data={data || { page: 1, pages: 1, total: 0 }} pageSize={pageSize} onPage={onPage} onPageSize={onPageSize} />
+        </div>
+        {rows.length > 0 && listState !== 'loading' && (
+          <div className="mh-lcols" aria-hidden>
+            <span>{t('aliases.col.alias')}</span>
+            <span>{t('aliases.col.account')}</span>
+            <span>{t('table.lastCode')}</span>
+            <span className="mh-acols__end">{t('table.actions')}</span>
           </div>
-          <Button type="submit" variant="solid">
-            {t('overview.search')}
-          </Button>
-        </form>
-      </Card>
-
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-border/70 px-4 py-3">
-          <Pager
-            data={data || { page: 1, pages: 1, total: 0 }}
-            pageSize={pageSize}
-            onPage={onPage}
-            onPageSize={onPageSize}
-          />
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-border/70 text-left text-xs font-medium uppercase tracking-wide text-subtle">
-                <th className="px-4 py-2.5 align-middle font-medium">{t('aliases.col.alias')}</th>
-                <th className="w-[260px] px-3 py-2.5 align-middle font-medium">
-                  {t('aliases.col.account')}
-                </th>
-                <th className="w-[150px] px-3 py-2.5 align-middle font-medium">{t('table.lastCode')}</th>
-                <th className="w-[260px] px-4 py-2.5 text-right align-middle font-medium">
-                  {t('table.actions')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {listState === 'ready' && rows.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="align-middle">
-                    <StateBlock state="empty" message={t('aliases.empty')} />
-                  </td>
-                </tr>
-              )}
-              {listState === 'loading' && (
-                <tr>
-                  <td colSpan={4} className="align-middle">
-                    <StateBlock state="loading" />
-                  </td>
-                </tr>
-              )}
-              {listState === 'error' && (
-                <tr>
-                  <td colSpan={4} className="align-middle">
-                    <StateBlock state="error" onRetry={load} />
-                  </td>
-                </tr>
-              )}
-              {listState === 'ready' &&
-                rows.map((alias) => (
-                  <AliasRow
-                    key={alias.id}
-                    alias={alias}
-                    busy={rowBusy[alias.id]}
-                    code={rowCode[alias.id]}
-                    t={t}
-                    onCode={onCode}
-                  />
-                ))}
-            </tbody>
-          </table>
-        </div>
-
-        {listState === 'ready' && data && data.pages > 1 && (
-          <div className="border-t border-border/70 px-4 py-3">
+        )}
+        {body}
+        {listState !== 'loading' && data && data.pages > 1 && (
+          <div className="mh-atable__pager mh-atable__pager--foot">
             <Pager data={data} pageSize={pageSize} onPage={onPage} onPageSize={onPageSize} />
           </div>
         )}
-      </Card>
+      </section>
     </div>
   )
 }
 
-function AliasRow({ alias, busy, code, t, onCode }) {
+const AliasRow = memo(function AliasRow({ alias, busy, code, q, t, onCode }) {
   const dead = alias.account_status === 'dead'
-  // after pressing 接码: show fetched result; else fall back to stored last_code
   const fetched = code && code.found ? code.code : null
   const showCode = fetched ?? alias.last_code
   const showNone = code && !code.found && !code.dead
-
   return (
-    <tr className="border-b border-border/50 align-top transition-colors duration-fast hover:bg-surface-2/40">
-      <td className="max-w-[320px] px-4 py-2.5 align-middle">
-        <span className="block truncate font-mono text-sm text-text" title={alias.alias_email}>
-          {alias.alias_email}
-        </span>
-      </td>
-      <td className="px-3 py-2.5 align-middle">
-        <div className="flex items-center gap-2">
-          <Link
-            to={`/hotmail/accounts/${alias.account_id}`}
-            className="min-w-0 truncate text-sm text-muted hover:text-accent"
-            title={alias.account_email}
-          >
-            {alias.account_email}
-          </Link>
-          <Badge tone={dead ? 'danger' : 'success'} dot className="shrink-0">
-            {t(`status.${alias.account_status}`)}
-          </Badge>
+    <li className="mh-lrow">
+      <div className="mh-lrow__alias">
+        <CopyAddr email={alias.alias_email} q={q} />
+      </div>
+      <div className="mh-lrow__acct">
+        <Link to={`/hotmail/accounts/${alias.account_id}`} className="mh-lrow__acct-link" title={alias.account_email}>
+          {alias.account_email}
+        </Link>
+        <StatusPill tone={dead ? 'bad' : 'ok'}>{t(`status.${alias.account_status}`)}</StatusPill>
+      </div>
+      <div className="mh-arow__foot">
+        <div className="mh-lrow__code">
+          <CodeCell code={showCode} />
         </div>
-      </td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-middle">
-        {showCode ? <CopyCode code={showCode} size="sm" /> : <span className="text-subtle">—</span>}
-      </td>
-      <td className="px-4 py-2.5 align-middle">
-        <div className="flex flex-col items-end gap-1.5">
-          <div className="flex items-center justify-end gap-1">
-            <Link to={`/hotmail/accounts/${alias.account_id}`}>
-              <Button size="sm" variant="ghost" title={t('action.enter')}>
-                <LogIn size={13} />
-                <span className="hidden xl:inline">{t('action.enter')}</span>
-              </Button>
-            </Link>
-            <Button size="sm" variant="solid" loading={busy} onClick={() => onCode(alias)}>
-              {!busy && <KeyRound size={13} />}
-              {t('alias.code')}
-            </Button>
-          </div>
-          {/* in-place code result: fetched code (already in the cell) + subject, or "not found" */}
+        <div className="mh-lrow__acts">
+          <span className="mh-arow__acts">
+            <ActBtn icon={ArrowUpRight} label={t('action.enter')} to={`/hotmail/accounts/${alias.account_id}`} />
+            <ActBtn icon={KeyRound} label={t('alias.code')} showLabel tone="accent" busy={busy} onClick={() => onCode(alias)} />
+          </span>
           {fetched && code.subject && (
-            <span className="max-w-[230px] truncate text-[11px] text-subtle" title={code.subject}>
+            <span className="mh-lrow__res" title={code.subject}>
               {code.subject}
             </span>
           )}
-          {showNone && <span className="text-[11px] text-warning">{t('alias.none')}</span>}
-          {code && code.dead && <span className="text-[11px] text-danger">{t('alias.dead')}</span>}
+          {showNone && <span className="mh-lrow__res is-warn">{t('alias.none')}</span>}
+          {code && code.dead && <span className="mh-lrow__res is-bad">{t('alias.dead')}</span>}
         </div>
-      </td>
-    </tr>
+      </div>
+    </li>
   )
-}
+})

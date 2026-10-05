@@ -6,6 +6,10 @@
 
 按下面三步走。先不要问用户问题，问询在 skill 的第 4 节统一进行。
 
+**运行位置**：这套流程要在用户本人能操作的电脑上跑（他自己的电脑，或他能 SSH 登录的机器）。中途要他在浏览器里点授权、在终端里输入登录密码，本地版也只对那台机器开放。如果你运行在用户碰不到的云端容器里，走不完这个流程，请用户改在自己电脑上的 AI 工具里执行。
+
+**权限**：你的命令要能联网、能写用户主目录（`~/mailhub-kit`、第 2 步的 skills 目录、wrangler 的登录信息），还要能让本地版在后台常驻。你所在的工具如果有沙箱（例如 Codex 默认不联网、不能写工作区以外的目录），先向用户申请这些权限，或请他切到允许联网的模式。之后网络检查不通时，先排除是沙箱拦的，再去怀疑用户的网络。
+
 项目地址：https://github.com/xtianowner/mailhub-kit。如果你是通过网址读到本文件、本机还没有这个项目，就按第 1 步先把它下载下来。
 
 ## 1. 放到固定位置
@@ -13,12 +17,13 @@
 项目根必须是：
 
 - macOS / Linux：`~/mailhub-kit`
-- Windows：`%USERPROFILE%\mailhub-kit`
+- Windows：用户主目录下的 `mailhub-kit`。PowerShell 写 `"$env:USERPROFILE\mailhub-kit"`，cmd 写 `%USERPROFILE%\mailhub-kit`，Git Bash 写 `~/mailhub-kit`。不要把 `%USERPROFILE%` 原样写进 PowerShell 或 Git Bash 的命令：它不会被展开，会在当前目录建出一个字面上叫 `%USERPROFILE%` 的文件夹，下次就找不到进度了。
 
 - 这个目录**已经存在**时，不要覆盖：它可能是一次没做完的搭建，进度就记在里面。直接在那里继续，第 3 步的 `status` 会告诉你做到了哪。
 - 不存在时：
-  - 有 git：`git clone https://github.com/xtianowner/mailhub-kit.git ~/mailhub-kit`。Windows 上目标路径换成 `%USERPROFILE%\mailhub-kit`。
+  - 有 git：`git clone https://github.com/xtianowner/mailhub-kit.git ~/mailhub-kit`。Windows 上目标路径按上面对应 shell 的写法。
   - 没有 git：下载 https://github.com/xtianowner/mailhub-kit/archive/refs/heads/main.zip，解压后把文件夹 `mailhub-kit-main` 改名为 `mailhub-kit`，放到上面的位置。
+  - 克隆和下载都失败（国内网络常见）：请用户在自己的浏览器里下载上面的 zip，把文件路径告诉你，再按下一条处理。
   - 用户直接给了压缩包或文件夹：解压或复制过去。
 
 之后所有命令都在这个目录里执行。检查方法：项目根下存在 `kit/scripts/setup.mjs` 这个文件。
@@ -35,6 +40,8 @@
 | Codex | `~/.agents/skills/mailhub-setup/` |
 | Hermes Agent | `~/.hermes/skills/mailhub-setup/` |
 | 其它支持 Agent Skills（SKILL.md）的工具 | `~/.agents/skills/mailhub-setup/` |
+
+Windows 上把 `~` 换成用户主目录（PowerShell 写 `$env:USERPROFILE`）。
 
 支持 Agent Skills 的工具通常不用重启就能发现这个 skill。邮箱建好、用户确认之后，这个 skill 的任务就结束了，日常使用不需要它；用户愿意的话可以删掉。
 

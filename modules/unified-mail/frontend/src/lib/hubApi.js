@@ -7,23 +7,39 @@
 // 于是两个版本的界面天然同源，不会各自漂移。
 import { qs, request } from './http.js'
 import { cfApi } from './cfmailDirect.js'
+import { translate } from '../i18n/LocaleProvider.jsx'
 
 export const IS_CLOUD = import.meta.env.VITE_TARGET === 'cloud'
 
-// 云端版是纯静态站，没有本机注册表可写。
-const notSupported = (what) => () =>
-  Promise.reject(Object.assign(new Error(what), { userMessage: `云端版不支持${what}` }))
+// 云端版是纯静态站，没有本机注册表可写。提示文案取调用那一刻的界面语言。
+const notSupported = (key) => () =>
+  Promise.reject(Object.assign(new Error(key), { userMessage: translate(key) }))
 
 const localApi = {
 
   health: () => request('/api/hub/health'),
   summary: () => request('/api/hub/summary'),
 
-  // 统一收件箱：两个来源归并的时间倒序信息流
-  inbox: ({ limit, q, source, only_codes } = {}) =>
-    request(`/api/hub/inbox${qs({ limit, q, source, only_codes })}`),
+  // 统一总览「邮箱信息」区一次要的全部数据，每类只取一次：
+  // 汇总 / 上游健康 / Hotmail 分组 / 域名信箱列表（分组名和每个域名的信箱数都从这一份列表里算，不再为分组另拉一遍）。
+  // 各部分独立失败：哪一块取不到就是 null，页面按缺失降级，不整页报错。
+  overview: async () => {
+    const soft = (p) => p.catch(() => null)
+    const [summary, health, hotmailGroups, domainBoxes] = await Promise.all([
+      soft(request('/api/hub/summary')),
+      soft(request('/api/hub/health')),
+      soft(request('/api/hotmail/groups').then((r) => r?.groups || [])),
+      soft(request(`/api/hub/mailboxes${qs({ source: 'domain', limit: 1000 })}`).then((r) => r?.rows || [])),
+    ])
+    return { summary, health, hotmailGroups, domainBoxes, domains: health?.domain_suffixes || summary?.domain?.suffixes || [] }
+  },
 
-  // 统一接码：给地址，自动判定走 CFMail 还是 Graph
+  // 最近邮件（统一总览的时间线）：两个来源归并的时间倒序信息流。
+  // group = 分组名，同时作用于 Hotmail 账号分组与域名信箱分组（后端去首尾空白后精确匹配）
+  inbox: ({ limit, q, source, only_codes, group } = {}) =>
+    request(`/api/hub/inbox${qs({ limit, q, source, only_codes, group })}`),
+
+  // 单个地址取最新验证码（域名邮箱页「接码」按钮在用）：自动判定走 CFMail 还是 Graph
   code: (email, source = 'all') =>
     request('/api/hub/code', { method: 'POST', body: { email, source } }),
 
@@ -64,7 +80,7 @@ const cloudApi = {
   // 云端版的密钥在网关 Worker 里，浏览器不持有 —— 不存在「还没填密钥」这种状态，
   // 未登录会被登录页拦在外面。
   groups: () => Promise.resolve({ groups: [] }),
-  unregisterMailbox: notSupported('移出邮箱簿'),
+  unregisterMailbox: notSupported('err.cloudUnsupported.remove'),
 }
 
 export const hubApi = IS_CLOUD ? cloudApi : localApi

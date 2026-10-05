@@ -1,24 +1,35 @@
-import { useEffect, useState } from 'react'
-import { Save } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import { AlertTriangle, HeartPulse, Inbox, RotateCcw, Save } from 'lucide-react'
 import { api } from '../lib/api.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
-import { Button, Card } from '../components/ui.jsx'
-import { StateBlock } from '../components/StateBlock.jsx'
+import { EnvelopeSkeleton } from '../components/EnvelopeSkeleton.jsx'
+import { SettingsFrame, useSettingsSection } from '../components/SettingsFrame.jsx'
 
-const FIELDS = [
-  { key: 'poll_interval_seconds', label: 'settings.poll', type: 'number' },
-  { key: 'watch_folders', label: 'settings.folders', type: 'text', hint: 'settings.hint.folders' },
-  { key: 'default_search_keywords', label: 'settings.keywords', type: 'textarea' },
-  { key: 'keepalive_days', label: 'settings.keepalive', type: 'number' },
-]
+// 本地版设置（Hotmail 侧）：字段、读取、保存与改版前完全相同 —— 一份表单，api.saveSettings 一次存全部字段。
+// 只是按用途分成两个子页（收信 / 账号保活）放进侧栏子导航框架。
+const FIELDS = {
+  receive: [
+    { key: 'poll_interval_seconds', label: 'settings.poll', type: 'number' },
+    { key: 'watch_folders', label: 'settings.folders', type: 'text', hint: 'settings.hint.folders' },
+    { key: 'default_search_keywords', label: 'settings.keywords', type: 'textarea' },
+  ],
+  keepalive: [{ key: 'keepalive_days', label: 'settings.keepalive', type: 'number', hint: 'st.keepalive.hint' }],
+}
 
 export default function SettingsPage() {
   const { t } = useLocale()
   const toast = useToast()
+  const id = useId()
   const [form, setForm] = useState(null)
   const [state, setState] = useState('loading')
   const [saving, setSaving] = useState(false)
+
+  const sections = [
+    { key: 'receive', icon: Inbox, label: t('st.receive'), desc: t('st.receive.desc') },
+    { key: 'keepalive', icon: HeartPulse, label: t('st.keepalive'), desc: t('st.keepalive.desc') },
+  ]
+  const current = useSettingsSection(sections)
 
   const load = async () => {
     setState('loading')
@@ -49,42 +60,69 @@ export default function SettingsPage() {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  if (state === 'loading') return <StateBlock state="loading" />
-  if (state === 'error' || !form) return <StateBlock state="error" onRetry={load} />
-
-  return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-5">
-      <h1 className="font-heading text-xl font-semibold text-text">{t('settings.title')}</h1>
-      <Card className="p-5">
-        <form onSubmit={onSave} className="flex flex-col gap-5">
-          {FIELDS.map((f) => (
-            <label key={f.key} className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-text">{t(f.label)}</span>
+  let body
+  if (state === 'loading') body = <EnvelopeSkeleton rows={3} label={t('common.loading')} />
+  else if (state === 'error' || !form)
+    body = (
+      <p className="mh-formerr" role="alert">
+        <AlertTriangle size={15} aria-hidden />
+        <span>{t('common.error')}</span>
+        <button type="button" className="mh-linkbtn" onClick={load}>
+          <RotateCcw size={13} aria-hidden />
+          {t('common.retry')}
+        </button>
+      </p>
+    )
+  else
+    body = (
+      <form onSubmit={onSave} className="mh-form mh-form--settings">
+        {FIELDS[current].map((f) => {
+          const fid = `${id}-${f.key}`
+          return (
+            <div key={f.key} className="mh-field">
+              <label className="mh-label" htmlFor={fid}>
+                {t(f.label)}
+              </label>
               {f.type === 'textarea' ? (
                 <textarea
+                  id={fid}
                   value={form[f.key] ?? ''}
                   onChange={(e) => set(f.key, e.target.value)}
                   rows={3}
-                  className="w-full resize-y rounded border border-border bg-surface-2/60 px-3 py-2 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none"
+                  className="mh-input mh-input--area"
+                  aria-describedby={f.hint ? `${fid}-hint` : undefined}
                 />
               ) : (
                 <input
+                  id={fid}
                   type={f.type}
                   value={form[f.key] ?? ''}
                   onChange={(e) => set(f.key, e.target.value)}
-                  className="h-10 w-full rounded border border-border bg-surface-2/60 px-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none"
+                  className={`mh-input ${f.type === 'number' ? 'mh-input--num' : ''}`}
+                  aria-describedby={f.hint ? `${fid}-hint` : undefined}
                 />
               )}
-              {f.hint && <span className="text-xs text-subtle">{t(f.hint)}</span>}
-            </label>
-          ))}
-          <div className="flex justify-end">
-            <Button type="submit" variant="primary" loading={saving}>
-              <Save size={15} /> {t('settings.save')}
-            </Button>
-          </div>
-        </form>
-      </Card>
-    </div>
+              {f.hint && (
+                <span id={`${fid}-hint`} className="mh-help">
+                  {t(f.hint)}
+                </span>
+              )}
+            </div>
+          )
+        })}
+        <div className="mh-form__actions">
+          <button type="submit" className="mh-btn mh-btn--primary" disabled={saving}>
+            {saving ? <span className="mh-btn__spin" aria-hidden /> : <Save size={15} aria-hidden />}
+            {t('settings.save')}
+          </button>
+          <span className="mh-help">{t('st.saveAll')}</span>
+        </div>
+      </form>
+    )
+
+  return (
+    <SettingsFrame title={t('settings.title')} subtitle={t('st.subtitle')} sections={sections} current={current}>
+      {body}
+    </SettingsFrame>
   )
 }

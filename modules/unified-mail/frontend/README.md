@@ -11,8 +11,9 @@ npm run build    # 产物 dist/
 
 ## 约定（务必遵守）
 - **改设计变量** → `src/styles/tokens.css`（唯一真相源）。
-- **语义 class**：`bg-bg` / `bg-surface` / `text-text` / `text-muted` / `border-border` / `bg-gradient` / `shadow-glow` / `font-heading` / `rounded-lg`。不要写裸 HEX/px。
+- **视觉基线**：颜色、字体、圆角、动效按作者博客的「视觉基线」（青绿主色），数值以 `src/styles/tokens.css` 为准。颜色变量是空格分隔的 RGB 三元组（如 `--accent: 13 148 136`），浅色、深色各一套；不透明写 `rgb(var(--accent))`，半透明写 `rgb(var(--accent) / 0.12)`，Tailwind 的 `bg-accent/10` 也映射成这种写法。全项目只用这一种分隔方式，不要混进逗号三元组。字体 Atkinson 自托管在 `src/assets/fonts/`。
+- **品牌包**：形象插画与页脚署名放在 `src/brand/<名字>/brand.js`（约定见 `src/brand/index.js`）。构建时用环境变量 `VITE_BRAND` 选择，不设或目录不存在就用 `src/brand/default/`（自绘信封插画、无署名）。
+- **语义 class**：`bg-bg` / `bg-surface` / `bg-surface-2` / `text-heading` / `text-text` / `text-muted` / `border-border` / `bg-accent` / `font-heading` / `font-mono` / `rounded-lg`。不要写裸 HEX/px。
 - **加 react-bits 组件**：从公开仓库 `https://github.com/DavidHDev/react-bits` 的 `src/tailwind/<类>/<名>/<名>.jsx`（TS 项目走 `src/ts-tailwind/`）拷进 `src/components/reactbits/`，安装其 import 的依赖（gsap / ogl / three 等），色值改成 token。
 - 完整 playbook（全部 token 数值 / 组件分级 ✅⚠️🚫 / UX 铁律 / 反模式 / 动效优化 / 9 条检查清单）见 Claude Code agent **frontend-reactbits**（自包含，无需外部契约 .md）。
 
-> 种子组件：Magnet 为 react-bits 原文件；BlurText / ShinyText / FadeContent 加了 reduced-motion 兜底；SpotlightCard 已 re-tokenize 为 bg-surface/border-border；Particles 被 DynamicBackground（「网格+粒子」默认背景）内置使用。re-tokenize = 直接改组件源码的色值 class（种子未统一走 cn()/twMerge，靠 className 追加覆盖不可靠）。

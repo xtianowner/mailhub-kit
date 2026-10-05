@@ -1,226 +1,339 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Cloud, Inbox, KeyRound, Mailbox, ShieldCheck } from 'lucide-react'
-import { hubApi, IS_CLOUD } from '../lib/hubApi.js'
-import { fmtRelative } from '../lib/format.js'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { AlertTriangle, Cloud, Globe, Inbox, KeyRound, Mailbox } from 'lucide-react'
+import { IS_CLOUD } from '../lib/hubApi.js'
+import { useNow } from '../lib/motion.js'
+import { announce } from '../lib/announce.jsx'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
-import { Badge, Button, Card, CopyCode } from '../components/ui.jsx'
-import { StateBlock } from '../components/StateBlock.jsx'
-import { PageHeader, SourceBadge, UpstreamBar, useUpstreams } from '../components/hub.jsx'
+import { PageHeader } from '../components/hub.jsx'
+import { DetailDrawer } from '../components/DetailDrawer.jsx'
+import { HubFlow } from '../components/overview/HubFlow.jsx'
+import { InfoPanel } from '../components/overview/InfoPanel.jsx'
+import { SearchCommand } from '../components/overview/SearchCommand.jsx'
+import { FilterBar } from '../components/overview/FilterBar.jsx'
+import { LIMITS, MailTimeline } from '../components/overview/MailTimeline.jsx'
+import { MailDetail, messageHref } from '../components/overview/MailDetail.jsx'
+import { StatCard, StatusLight, fmtNum } from '../components/overview/StatCard.jsx'
+import { buildNodes, mergeGroups, nodeIdFor, useOverviewInfo, useTimeline } from '../components/overview/useOverview.js'
 
-// 统一总览：进门第一屏。回答三个问题——两条链路活着吗？我手上有多少邮箱？最近来了什么信？
-export default function HubOverviewPage() {
-  const { t, locale } = useLocale()
-  const navigate = useNavigate()
-  const { upstreams, state: upState, allOk, workerDiscovery, reload } = useUpstreams()
+const DEFAULT_LIMIT = 20
+const DRAWER_KEYS = ['m_src', 'm_id', 'm_acct']
 
-  const [summary, setSummary] = useState(null)
-  const [recent, setRecent] = useState(null)
-  const [listState, setListState] = useState('loading')
-
-  const load = useCallback(async () => {
-    // 没填密钥就别发请求了 —— 发出去必然失败，然后给用户看一个红色「请求失败」，
-    // 而真实原因只是「你还没输入 token」。空态要说人话。
-    setListState('loading')
-    try {
-      const [s, inbox] = await Promise.all([
-        hubApi.summary(),
-        hubApi.inbox({ limit: 8 }),
-      ])
-      setSummary(s)
-      setRecent(inbox.rows || [])
-      setListState('ready')
-    } catch {
-      setListState('error')
-    }
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title={t(IS_CLOUD ? 'hub.title.cloud' : 'hub.title')}
-        subtitle={t(IS_CLOUD ? 'hub.subtitle.cloud' : 'hub.subtitle')}
-        actions={
-          <>
-            <Button variant="ghost" size="md" onClick={() => navigate('/inbox')}>
-              <Inbox size={15} />
-              {t('hub.quick.inbox')}
-            </Button>
-            <Button variant="primary" size="md" onClick={() => navigate('/code')}>
-              <KeyRound size={15} />
-              {t('hub.quick.code')}
-            </Button>
-          </>
-        }
-      />
-
-      <UpstreamBar
-        upstreams={upstreams}
-        state={upState}
-        onRetry={reload}
-        workerDiscovery={workerDiscovery}
-      />
-
-      {/* 没填密钥时不要再叠一层「部分上游不可用」—— 上面的引导条已经说清楚了 */}
-      {upState === 'ready' && !allOk && (
-        <Card className="flex items-start gap-2.5 border-warning/30 bg-warning/5 px-4 py-3">
-          <ShieldCheck size={16} className="mt-0.5 shrink-0 text-warning" aria-hidden />
-          <p className="text-sm text-muted">{t('hub.degraded')}</p>
-        </Card>
-      )}
-
-      <SummaryCards summary={summary} t={t} />
-
-      <Card className="overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-          <h2 className="font-heading text-sm font-semibold text-text">{t('hub.recent.title')}</h2>
-          <Link
-            to="/inbox"
-            className="inline-flex items-center gap-1 text-xs font-medium text-accent transition-colors duration-fast hover:text-accent-hover"
-          >
-            {t('hub.recent.more')}
-            <ArrowRight size={13} aria-hidden />
-          </Link>
-        </div>
-
-        {listState !== 'ready' ? (
-          <StateBlock state={listState} onRetry={load} />
-        ) : recent.length === 0 ? (
-          <StateBlock state="empty" message={t(IS_CLOUD ? 'inbox.empty.cloud' : 'inbox.empty')} />
-        ) : (
-          <ul className="divide-y divide-border/50">
-            {recent.map((m) => (
-              <li key={`${m.source}:${m.mailbox}:${m.message_id}`}>
-                <Link
-                  to={`/message/${m.source}/${encodeURIComponent(m.message_id)}${
-                    m.source === 'hotmail' && m.account_id ? `?account_id=${m.account_id}` : ''
-                  }`}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 transition-colors duration-fast hover:bg-surface-2/40"
-                >
-                <SourceBadge source={m.source} />
-                <span className="min-w-0 flex-1 truncate text-sm text-text" title={m.subject || ''}>
-                  {m.subject || <span className="text-subtle">（无主题）</span>}
-                </span>
-                <span
-                  className="hidden max-w-[220px] truncate font-mono text-xs text-muted sm:inline"
-                  title={m.mailbox}
-                >
-                  {m.mailbox}
-                </span>
-                {m.code && <CopyCode code={m.code} size="sm" />}
-                  <span className="shrink-0 tabular-nums text-xs text-subtle">
-                    {fmtRelative(m.received_at, locale)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </div>
-  )
+// 在查询串上打补丁：空值 = 删掉这个参数
+function patchParams(params, patch) {
+  const next = new URLSearchParams(params)
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === '' || v === undefined || v === null) next.delete(k)
+    else next.set(k, v)
+  }
+  return next
 }
 
-/* ── 汇总卡片 ────────────────────────────────────────────────
-   四张：Hotmail 账号（带健康分解）/ 域名信箱 / 最近邮件 / 其中带码。
-   前两张点进去是各自的管理页，后两张点进去是统一收件箱。 */
-function SummaryCards({ summary, t }) {
-  const hot = summary?.hotmail
-  const dom = summary?.domain
+/* 统一总览（候选 A · 汇流枢纽）。从上到下：
+   邮箱信息（汇流动画 + 2×2 统计卡，可折叠）→ 命令面板式搜索 + 筛选（来源 / 分组 / 只看带验证码）
+   → 最近邮件（两个来源混在一条时间线里，10 / 20 / 50 / 100 条，不翻页）→ 点一行在右侧抽屉看详情。
+   筛选与打开的邮件全部落 URL（q / source / group / only_codes / limit / m_*）：刷新、分享链接后视图不丢，浏览器后退 = 关抽屉。 */
+export default function HubOverviewPage() {
+  const { t } = useLocale()
+  const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
+  const now = useNow(30_000)
+
+  const q = (params.get('q') || '').trim()
+  const group = (params.get('group') || '').trim()
+  const onlyCodes = params.get('only_codes') === '1'
+  const rawSource = params.get('source')
+  const source = !IS_CLOUD && (rawSource === 'hotmail' || rawSource === 'domain') ? rawSource : 'all'
+  const rawLimit = parseInt(params.get('limit') || '', 10)
+  const limit = LIMITS.includes(rawLimit) ? rawLimit : DEFAULT_LIMIT
+
+  const info = useOverviewInfo()
+  const timeline = useTimeline({ limit, q, source, group, onlyCodes })
+
+  const setParam = useCallback(
+    (patch) => setParams((prev) => patchParams(prev, patch), { replace: true }),
+    [setParams],
+  )
+  const hrefWith = (patch) => {
+    const s = patchParams(params, { ...patch, m_src: '', m_id: '', m_acct: '' }).toString()
+    return s ? `/?${s}` : '/'
+  }
+
+  /* ── 邮箱信息 ── */
+  const data = info.data
+  const nodes = useMemo(() => buildNodes(data, t), [data, t])
+  const groups = useMemo(() => mergeGroups(data?.hotmailGroups, data?.domainBoxes, group), [data, group])
+  const upstreams = data?.health?.upstreams || []
+  const upOf = (src) => upstreams.find((u) => u.source === src)
+  const statusOf = (u) =>
+    !u ? '—' : u.ok ? t('up.ok') : u.detail?.includes('未配置') || u.detail?.includes('密钥') ? t('up.unconfigured') : t('up.down')
+  const lights = (IS_CLOUD ? ['domain'] : ['hotmail', 'domain']).map((src) => {
+    const u = upOf(src)
+    return {
+      key: src,
+      label: t(src === 'hotmail' ? 'src.hotmail' : 'src.domain'),
+      long: t(src === 'hotmail' ? 'ov.link.hotmail' : 'ov.link.domain'),
+      status: info.state === 'loading' ? '…' : statusOf(u),
+      tone: !u || u.ok ? 'ok' : 'warn',
+      title: [t(src === 'hotmail' ? 'up.hotmail.hint' : 'up.domain.hint'), u?.detail].filter(Boolean).join('\n'),
+    }
+  })
+  const degraded = info.state === 'ready' && upstreams.length > 0 && upstreams.some((u) => !u.ok)
+  const legacyWorker = !IS_CLOUD && info.state === 'ready' && data?.health?.worker_discovery === false
+  const hot = data?.summary?.hotmail
+  const dom = data?.summary?.domain
+  const domains = data?.domains || []
+  const mailboxCount = Array.isArray(data?.domainBoxes) ? data.domainBoxes.length : dom?.mailboxes
+  const recent = data?.summary?.recent_count
+  const withCode = data?.summary?.recent_with_code
+  const pct = recent ? Math.round(((withCode || 0) / recent) * 100) : 0
+  const light = (src) => {
+    const u = upOf(src)
+    return u ? { tone: u.ok ? 'ok' : 'warn', label: `${t(src === 'hotmail' ? 'src.hotmail' : 'src.domain')} · ${statusOf(u)}` } : null
+  }
+
   const cards = [
-    {
-      key: 'hotmail',
-      to: '/hotmail',
-      icon: Mailbox,
-      label: t('hub.card.hotmail'),
-      value: hot?.accounts ?? '—',
-      available: hot?.available,
-      sub:
-        hot?.available && hot?.accounts
-          ? [
-              { tone: 'success', text: `${hot.ok} ${t('bucket.ok')}` },
-              { tone: 'warning', text: `${hot.expiring} ${t('bucket.expiring')}` },
-              { tone: 'danger', text: `${hot.expired} ${t('bucket.expired')}` },
-            ]
-          : null,
-    },
+    IS_CLOUD
+      ? {
+          key: 'domains',
+          icon: Globe,
+          label: t('ov.card.domains'),
+          value: domains.length,
+          sub: domains.length ? domains.join(' · ') : null,
+          to: '/domain',
+        }
+      : {
+          key: 'hotmail',
+          icon: Mailbox,
+          label: t('hub.card.hotmail'),
+          value: hot?.available ? hot.accounts : NaN,
+          light: light('hotmail'),
+          sub:
+            hot?.available && hot.accounts ? (
+              <span className="mh-health">
+                <span className="ok">{t('ov.health.ok', { n: fmtNum(hot.ok) })}</span>
+                <span className="warn">{t('ov.health.expiring', { n: fmtNum(hot.expiring) })}</span>
+                <span className="bad">{t('ov.health.expired', { n: fmtNum(hot.expired) })}</span>
+              </span>
+            ) : hot && !hot.available ? (
+              t('up.down')
+            ) : null,
+          to: '/hotmail',
+        },
     {
       key: 'domain',
-      to: '/domain',
       icon: Cloud,
       label: t('hub.card.domain'),
-      value: dom?.mailboxes ?? '—',
-      available: dom?.available,
-      sub: dom?.suffixes?.length
-        ? [{ tone: 'subtle', text: dom.suffixes.join(' · ') }]
-        : null,
+      value: Number.isFinite(mailboxCount) ? mailboxCount : NaN,
+      light: light('domain'),
+      sub: domains.length ? t('ov.card.domainsSub', { n: domains.length }) : null,
+      to: '/domain',
     },
     {
       key: 'recent',
-      to: '/inbox',
       icon: Inbox,
       label: t('hub.card.recent'),
-      value: summary?.recent_count ?? '—',
-      available: true,
-      sub: null,
+      value: Number.isFinite(recent) ? recent : NaN,
+      sub: t('ov.card.recentSub'),
+      to: hrefWith({ only_codes: '' }),
     },
     {
       key: 'codes',
-      to: '/inbox?only_codes=1',
       icon: KeyRound,
       label: t('hub.card.codes'),
-      value: summary?.recent_with_code ?? '—',
-      available: true,
-      sub: null,
+      value: Number.isFinite(withCode) ? withCode : NaN,
+      sub: Number.isFinite(withCode) && recent ? t('ov.card.codesSub', { pct }) : null,
+      to: hrefWith({ only_codes: '1' }),
     },
   ]
 
-  // 云端版根本不管 Hotmail，摆一张恒为 0 的卡片只会让人以为出问题了
-  const visible = IS_CLOUD ? cards.filter((c) => c.key !== 'hotmail') : cards
+  const summaryLine = (
+    <p className="mh-summary">
+      {!IS_CLOUD && (
+        <span className="mh-summary__item">
+          <span className="mh-dot mh-dot--hotmail" aria-hidden />
+          {t('src.hotmail')} <b>{hot?.available ? fmtNum(hot.accounts) : '—'}</b>
+          {hot?.expiring > 0 && <span className="mh-summary__warn">{t('ov.health.expiring', { n: fmtNum(hot.expiring) })}</span>}
+        </span>
+      )}
+      <span className="mh-summary__item">
+        <span className="mh-dot mh-dot--domain" aria-hidden />
+        {t('src.domain')} <b>{fmtNum(mailboxCount)}</b>
+      </span>
+      <span className="mh-summary__item">
+        {t('hub.card.recent')} <b>{fmtNum(recent)}</b>
+      </span>
+      <span className="mh-summary__item">
+        {t('hub.card.codes')} <b>{fmtNum(withCode)}</b>
+      </span>
+      <span className={`mh-summary__item ${degraded ? 'is-warn' : 'is-ok'}`}>
+        <StatusLight tone={degraded ? 'warn' : 'ok'} label={t(degraded ? 'hub.degraded' : 'ov.link.allOk')} />
+        {t(degraded ? 'ov.link.someDown' : 'ov.link.allOk')}
+      </span>
+    </p>
+  )
+
+  const notice =
+    degraded || legacyWorker ? (
+      <p className="mh-info__notice" role="status">
+        <AlertTriangle size={14} aria-hidden />
+        <span>{legacyWorker ? t('up.worker.legacy.hint') : t('hub.degraded')}</span>
+      </p>
+    ) : null
+
+  /* ── 新邮件到达：汇流动画发一颗大光点 + 读屏播报 ── */
+  const arrival = timeline.arrival
+  const flowArrival = useMemo(
+    () => (arrival ? { id: arrival.id, nodeId: nodeIdFor(arrival.row, nodes) } : null),
+    [arrival, nodes],
+  )
+  const announced = useRef(null)
+  useEffect(() => {
+    if (!arrival || announced.current === arrival.id) return
+    announced.current = arrival.id
+    announce(
+      arrival.count > 1
+        ? t('ov.arrival.many', { n: arrival.count })
+        : t('ov.arrival.one', { subject: arrival.row.subject || t('common.noSubject') }),
+    )
+  }, [arrival, t])
+
+  /* ── 筛选 ── */
+  const filtersActive = Boolean(q || group || onlyCodes || source !== 'all')
+  const onSource = useCallback(
+    (s) => {
+      const keep = !group || s === 'all' || groups.some((g) => g.name === group && g.sources.has(s))
+      setParam({ source: s === 'all' ? '' : s, ...(keep ? {} : { group: '' }) })
+    },
+    [group, groups, setParam],
+  )
+  const onReset = useCallback(() => setParam({ q: '', source: '', group: '', only_codes: '' }), [setParam])
+
+  /* ── 抽屉（URL 即状态：打开推一条历史，后退即关闭）── */
+  const mSrc = params.get('m_src')
+  const mId = params.get('m_id')
+  const mAcct = params.get('m_acct')
+  const target = useMemo(
+    () => (mSrc && mId && (mSrc === 'hotmail' || mSrc === 'domain') ? { source: mSrc, id: mId, account_id: mAcct || '' } : null),
+    [mSrc, mId, mAcct],
+  )
+  const preview = useMemo(
+    () => (target ? timeline.rows.find((r) => r.source === target.source && String(r.message_id) === target.id) : null),
+    [target, timeline.rows],
+  )
+  const pushed = useRef(false)
+  useEffect(() => {
+    if (!target) pushed.current = false
+  }, [target])
+  // setParams 每次 URL 变化都会换一个新函数；行组件拿到的 onOpen 必须恒定，否则每次开关抽屉整张列表都要重渲染
+  const setParamsRef = useRef(setParams)
+  setParamsRef.current = setParams
+  const openRow = useCallback((m) => {
+    pushed.current = true
+    setParamsRef.current(
+      (prev) =>
+        patchParams(prev, {
+          m_src: m.source,
+          m_id: String(m.message_id),
+          m_acct: m.source === 'hotmail' && m.account_id ? String(m.account_id) : '',
+        }),
+      { replace: false },
+    )
+  }, [])
+  const closeDrawer = useCallback(() => {
+    if (pushed.current) {
+      pushed.current = false
+      navigate(-1)
+    } else {
+      setParam(Object.fromEntries(DRAWER_KEYS.map((k) => [k, ''])))
+    }
+  }, [navigate, setParam])
 
   return (
-    <div className={`grid grid-cols-2 gap-2.5 ${IS_CLOUD ? 'lg:grid-cols-3' : 'lg:grid-cols-4'}`}>
-      {visible.map(({ key, to, icon: Icon, label, value, available, sub }) => (
-        <Link
-          key={key}
-          to={to}
-          className="group flex flex-col gap-1.5 rounded-lg border border-border/70 bg-surface/60 px-3.5 py-3 backdrop-blur-sm transition-all duration-fast hover:border-accent/50"
-        >
-          <span className="flex items-center gap-1.5 text-xs font-medium text-muted">
-            <Icon size={13} aria-hidden />
-            {label}
-            {available === false && (
-              <Badge tone="warning" className="ml-auto px-1.5 py-0 text-[10px]">
-                {t('up.down')}
-              </Badge>
+    <div className="mh-page">
+      <PageHeader
+        title={t(IS_CLOUD ? 'hub.title.cloud' : 'hub.title')}
+        subtitle={t(IS_CLOUD ? 'hub.subtitle.cloud' : 'hub.subtitle')}
+      />
+
+      <InfoPanel
+        lights={lights}
+        summary={summaryLine}
+        notice={notice}
+        onRefresh={() => {
+          info.reload()
+          timeline.reload()
+        }}
+        refreshing={info.state === 'refreshing'}
+      >
+        <div className="mh-a">
+          <div className="mh-a__flow">
+            {info.state === 'loading' && !data ? (
+              <div className="mh-a__flow-wait" aria-hidden />
+            ) : (
+              <HubFlow
+                nodes={nodes}
+                arrival={flowArrival}
+                formatValue={fmtNum}
+                label={t('ov.flow.label', {
+                  list: nodes.map((n) => (n.value != null ? `${n.title} ${fmtNum(n.value)}` : n.title)).join(t('ov.flow.sep')),
+                })}
+              />
             )}
-          </span>
-          <span className="font-heading text-2xl font-semibold tabular-nums text-text">
-            {value}
-          </span>
-          {sub && (
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-subtle">
-              {sub.map((s, i) => (
-                <span key={i} className={TONE_TEXT[s.tone]}>
-                  {s.text}
-                </span>
-              ))}
-            </span>
-          )}
-        </Link>
-      ))}
+          </div>
+          <div className="mh-stats">
+            {cards.map(({ key, ...c }) => (
+              <StatCard key={key} {...c} />
+            ))}
+          </div>
+        </div>
+      </InfoPanel>
+
+      <div className="mh-searchrow">
+        <SearchCommand
+          value={q}
+          onSearch={(v) => setParam({ q: v })}
+          resultHint={timeline.state === 'ready' ? t('ov.search.hint', { n: timeline.rows.length }) : undefined}
+        />
+        <FilterBar
+          showSource={!IS_CLOUD}
+          source={source}
+          onSource={onSource}
+          groups={groups}
+          group={group}
+          onGroup={(g) => setParam({ group: g })}
+          onlyCodes={onlyCodes}
+          onOnlyCodes={(v) => setParam({ only_codes: v ? '1' : '' })}
+          active={filtersActive}
+          onReset={onReset}
+        />
+      </div>
+
+      <MailTimeline
+        rows={timeline.rows}
+        state={timeline.state}
+        limit={limit}
+        onLimit={(n) => setParam({ limit: n === DEFAULT_LIMIT ? '' : String(n) })}
+        query={q}
+        filtersActive={filtersActive}
+        onReset={onReset}
+        onOpen={openRow}
+        onRetry={timeline.reload}
+        showSource={!IS_CLOUD}
+        now={now}
+        emptyMessage={t(IS_CLOUD ? 'inbox.empty.cloud' : 'inbox.empty')}
+      />
+
+      <DetailDrawer
+        open={Boolean(target)}
+        onClose={closeDrawer}
+        title={t('drawer.mailTitle')}
+        resizeKey="mail"
+        allowFullscreen
+        externalHref={target ? messageHref(target) : undefined}
+      >
+        {target && <MailDetail key={`${target.source}:${target.id}`} target={target} preview={preview} />}
+      </DetailDrawer>
     </div>
   )
-}
-
-// 字面量映射 —— Tailwind JIT 只扫字面串，`text-${x}` 会被丢掉。
-const TONE_TEXT = {
-  success: 'text-success',
-  warning: 'text-warning',
-  danger: 'text-danger',
-  subtle: 'text-subtle',
 }

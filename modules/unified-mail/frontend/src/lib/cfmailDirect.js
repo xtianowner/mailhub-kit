@@ -9,6 +9,7 @@
 // 网关实现见 modules/unified-mail/cloud/src/index.js。
 //
 // 输出形状与本地版 hubApi 对齐，页面组件两个目标通用。
+import { translate } from '../i18n/LocaleProvider.jsx'
 
 export class CfError extends Error {
   constructor(message, status, kind, retryAfter = 0) {
@@ -20,11 +21,12 @@ export class CfError extends Error {
   }
 
   get userMessage() {
-    if (this.status === 401) return '登录已过期，请重新登录'
-    if (this.status === 503) return '服务端还没配置好密钥（见部署文档）'
-    if (this.status === 0) return '连不上服务器，检查网络'
-    if (this.status === 404) return '没找到'
-    return this.message || `请求失败（HTTP ${this.status}）`
+    // 取值那一刻的界面语言；服务端回的错误原文（this.message）原样透出
+    if (this.status === 401) return translate('err.sessionExpired')
+    if (this.status === 503) return translate('err.serverKeysMissing')
+    if (this.status === 0) return translate('err.network.cloud')
+    if (this.status === 404) return translate('err.notFound')
+    return this.message || translate('err.http', { status: this.status })
   }
 }
 
@@ -73,7 +75,7 @@ function toMessage(r, mailboxFallback = '') {
   const truncated = Boolean(r.body_truncated)
   return {
     source: 'domain',
-    mailbox: r.mailbox_email || mailboxFallback || '(未知收件人)',
+    mailbox: r.mailbox_email || mailboxFallback || translate('md.unknownRecipient'),
     message_id: String(r.id || ''),
     subject: r.subject || null,
     from_name: null,
@@ -165,9 +167,43 @@ export const cfApi = {
     }
   },
 
-  async inbox({ limit = 50, q, only_codes } = {}) {
+  // 统一总览「邮箱信息」区一次要的全部数据，每类只取一次（形状与本地版 hubApi.overview 一致）：
+  // 域名列表 / 信箱列表 / 最近 50 封（算「最近邮件、其中带验证码」）。健康状态由域名列表能否取到推出，
+  // 分组名与每个域名的信箱数都从同一份信箱列表里算，不再为分组或汇总另拉信箱列表。
+  async overview() {
+    const [doms, boxes, recent] = await Promise.all([
+      call('/admin/domains').then((d) => ({ ok: true, list: d.domains || [] }), (err) => ({ ok: false, err })),
+      cfApi.mailboxes({ limit: 1000 }).catch(() => null),
+      cfApi.inbox({ limit: 50 }).catch(() => null),
+    ])
+    const domains = doms.ok ? doms.list : []
+    const rows = boxes?.rows || []
+    return {
+      health: {
+        upstreams: [
+          doms.ok
+            ? { source: 'domain', ok: true, base: 'CFMail', domains: domains.length }
+            : { source: 'domain', ok: false, base: 'CFMail', detail: doms.err?.userMessage },
+        ],
+        domain_suffixes: domains,
+        worker_discovery: doms.ok,
+      },
+      summary: {
+        hotmail: { available: false, accounts: 0, ok: 0, expiring: 0, expired: 0, dead: 0 },
+        domain: { available: true, mailboxes: boxes ? rows.length : null, suffixes: domains },
+        recent_count: recent ? recent.rows.length : null,
+        recent_with_code: recent ? recent.rows.filter((r) => r.code).length : null,
+      },
+      hotmailGroups: [],
+      domainBoxes: boxes ? rows : null,
+      domains,
+    }
+  },
+
+  // group：按信箱分组名筛选（mail-api 去首尾空白后精确匹配；网关原样转发查询串）
+  async inbox({ limit = 50, q, only_codes, group } = {}) {
     const d = await call('/admin/messages/recent', {
-      params: { limit, q, only_codes: only_codes ? 'true' : undefined },
+      params: { limit, q, only_codes: only_codes ? 'true' : undefined, group },
     })
     const rows = (d.results || []).map((r) => toMessage(r))
     return { rows, count: rows.length }
@@ -175,7 +211,7 @@ export const cfApi = {
 
   async message({ id }) {
     const d = await call('/admin/message', { params: { id } })
-    if (!d.message) throw new CfError('没找到这封邮件', 404)
+    if (!d.message) throw new CfError(translate('err.messageNotFound'), 404)
     return toMessage(d.message)
   },
 
@@ -198,7 +234,7 @@ export const cfApi = {
       if (err.status === 404) {
         return {
           source: 'domain', email, found: false, code: null, links: [],
-          error: '这个域名信箱还没收到过信（收到就会自动出现，不用先创建）',
+          error: translate('code.notReceivedYet.cloud'),
           message: null,
         }
       }
@@ -217,7 +253,7 @@ export const cfApi = {
 
   async createMailbox({ name, domain, label, group }) {
     const d = await call('/admin/new_address', { method: 'POST', body: { name, domain } })
-    if (!d.email && !d.address) throw new CfError('建信箱失败：返回里没有 email', 500)
+    if (!d.email && !d.address) throw new CfError(translate('err.createNoEmail'), 500)
     const email = d.email || d.address
     if (label || group) {
       await call('/admin/mailboxes/meta', {

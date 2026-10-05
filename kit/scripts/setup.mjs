@@ -80,7 +80,7 @@ function stepInit() {
   if (before && JSON.stringify(before) !== JSON.stringify(saved)) {
     // 配置变更后，完成记录与用户确认不再代表当前配置（各步可重跑，已有资源会复用）。
     const { done = {} } = loadState();
-    saveState({ done: { deps: done.deps, login: done.login }, user_confirmed: null, last_error: null });
+    saveState({ done: { deps: done.deps, login: done.login }, user_confirmed: null, test_prepared: null, last_error: null });
     log.info("配置有变化：已清空完成记录，接下来按当前配置重跑各步");
   }
   log.ok(`已保存配置：${path.relative(ROOT, path.join(STATE_DIR, "config.json"))}`);
@@ -572,6 +572,7 @@ async function stepVerify() {
 async function stepPrepareTest() {
   const cfg = loadConfig();
   const vars = readDevVars();
+  let serverDate = null;
   const address = await prepareTestMailbox({ domain: cfg.domain, address: opt("mail"),
     request: async (route, { method = "GET", body } = {}) => {
       const res = await fetchx(`https://${cfg.api_host}${route}`, {
@@ -579,9 +580,13 @@ async function stepPrepareTest() {
         ...(body && { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) throw new StepError(`准备测试邮箱失败（HTTP ${res.status}）`, { next: "检查 deploy-api、域名是否启用和数据库迁移后重跑 prepare-test" });
+      serverDate = res.headers.get("date") || serverDate;
       return res.json();
     },
   });
+  // confirm 只认这个时间之后收到的信。用接口服务器的时间，不受本机时钟偏差影响。
+  const at = Date.parse(serverDate) || Date.now();
+  saveState({ test_prepared: { address, at: new Date(at).toISOString() } });
   log.ok(`测试收件地址已登记：${address}（已有邮件保留）`);
   log.info("现在请用户用自己的外部邮箱发一封信；此命令不会发送邮件，也不代表收信验收已通过。");
 }
@@ -662,6 +667,14 @@ async function confirmDone() {
     throw needHuman(`还没查到发给 ${address} 的邮件`,
       `先用 prepare-test --mail ${address} 登记地址，再用你自己的 Gmail / QQ 等邮箱发一封信，一分钟后再确认。\n` +
       `如果你发到了别的地址，告诉我那个地址，我会用 --mail <地址> 查。`);
+  }
+  // 只认登记测试地址之后收到的信：改过配置、重新部署后，旧信证明不了新的收信链路。
+  // 留 60 秒余量：服务器时间只精确到秒，收信与接口也不是同一台机器。
+  const { test_prepared: prepared } = loadState();
+  const receivedAt = Date.parse(found[0].received_at);
+  if (!prepared?.at || !(receivedAt >= Date.parse(prepared.at) - 60_000)) {
+    throw needHuman(prepared?.at ? `查到的最新一封信早于登记测试地址的时间（${prepared.at}），是旧信` : "还没有登记测试地址的记录",
+      `先运行 prepare-test${opt("mail") ? ` --mail ${address}` : ""}，再请用户用自己的邮箱发一封新信，一分钟后再确认。`);
   }
   const { done = {} } = loadState();
   saveState({ done: { ...done, verify: new Date().toISOString() }, user_confirmed: new Date().toISOString(), test_mail: { address, received_at: found[0].received_at || null } });

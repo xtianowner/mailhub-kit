@@ -4,6 +4,8 @@
 // 令牌：只在统一层设了 HUB_API_TOKEN 时才需要。存 localStorage，每个请求带
 // Authorization。**这是访问令牌，不是邮箱凭据** —— 邮箱的 refresh token 永远只在后端。
 
+import { translate } from '../i18n/LocaleProvider.jsx'
+
 const TOKEN_KEY = 'hub_token'
 
 export function getToken() {
@@ -33,12 +35,12 @@ export class ApiError extends Error {
 
   /** 给用户看的一句话（后端的 detail 优先，其次按状态码兜底）。 */
   get userMessage() {
-    if (this.status === 0) return '连不上服务，确认 ./start.sh 已经跑起来'
+    if (this.status === 0) return translate('err.network.local')
     const d = this.body?.detail
     if (typeof d === 'string' && d) return d
-    if (this.status === 401) return '未授权，请重新登录'
-    if (this.status === 503) return '上游服务没在跑'
-    return `请求失败（HTTP ${this.status}）`
+    if (this.status === 401) return translate('err.unauthorized')
+    if (this.status === 503) return translate('err.upstreamDown')
+    return translate('err.http', { status: this.status })
   }
 }
 

@@ -56,7 +56,7 @@ const INLINE_PATTERNS = [
   {
     name: "generic_code_label",
     score: 88,
-    re: /\bcode\b(?:\s|[：:：\-–—]){0,6}([A-Z0-9]{4,10})/gi,
+    re: /\bcode\b(?:\s|[：:：\-–—]){0,6}(?:is\s+)?([A-Z0-9]{4,10})/gi,
   },
 ];
 
@@ -209,7 +209,8 @@ function collectInlineCandidates(source, text) {
     const regex = new RegExp(pattern.re.source, pattern.re.flags);
     let match;
     while ((match = regex.exec(normalized)) !== null) {
-      const code = String(match[1] || "").toUpperCase();
+      // 码原样保留：区分大小写的码（aB3dE9）改成大写就废了。比较类判断各自忽略大小写。
+      const code = String(match[1] || "");
       if (!looksLikeCodeToken(code)) continue;
 
       const snippet = snippetAround(normalized, match.index);
@@ -251,7 +252,7 @@ function collectLineCandidates(source, text) {
     const tokenMatches = line.match(/\b[A-Z0-9]{4,10}\b/gi) || [];
 
     for (const tokenRaw of tokenMatches) {
-      const code = tokenRaw.toUpperCase();
+      const code = tokenRaw;
       if (!looksLikeCodeToken(code)) continue;
 
       let score = sourceWeight(source) + tokenWeight(code);

@@ -201,12 +201,12 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
     ? t('compose.bindingMissing')
     : t('compose.domainMissing')
   const inputClass =
-    'h-10 w-full rounded border border-border bg-surface-2/60 px-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-60'
+    'h-10 w-full rounded border border-border bg-surface-2 px-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-60'
   const textareaClass = `${inputClass} min-h-40 resize-y py-2.5 leading-relaxed`
 
   return createPortal(
     <div
-      className="fixed inset-0 z-overlay flex items-end justify-center bg-bg/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      className="overlay-in fixed inset-0 z-overlay flex items-end justify-center bg-bg/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onClose()
       }}
@@ -217,11 +217,11 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        className="z-modal flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-2xl flex-col overflow-hidden rounded-t-xl border border-border bg-surface shadow-glow sm:max-h-[min(88vh,760px)] sm:rounded-xl"
+        className="dialog-in z-modal flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-2xl flex-col overflow-hidden rounded-t-xl border border-border bg-surface shadow-lift sm:max-h-[min(88vh,760px)] sm:rounded-xl"
       >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border/60 px-4 py-4 sm:px-5">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-5">
           <div className="min-w-0">
-            <h2 id={titleId} className="flex items-center gap-2 font-heading text-lg font-semibold text-text">
+            <h2 id={titleId} className="flex items-center gap-2 font-heading text-lg font-semibold text-heading">
               <Mail size={18} className="shrink-0 text-accent" aria-hidden />
               {t(mode === 'reply' ? 'compose.reply.title' : 'compose.title')}
             </h2>
@@ -236,7 +236,7 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
             disabled={busy}
             aria-label={t('compose.close')}
             title={`${t('compose.close')} (Esc)`}
-            className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded text-muted transition-colors duration-fast hover:bg-surface-2 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted transition-colors duration-fast hover:bg-surface-2 hover:text-heading disabled:cursor-not-allowed disabled:opacity-50"
           >
             <X size={18} aria-hidden />
           </button>
@@ -245,7 +245,7 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
             {statusState === 'loading' && (
-              <div className="flex items-center gap-2 rounded border border-border/60 bg-surface-2/50 px-3 py-2.5 text-sm text-muted">
+              <div className="flex items-center gap-2 rounded border border-border bg-surface-2 px-3 py-2.5 text-sm text-muted">
                 <Spinner size={15} />
                 {t('compose.status.loading')}
               </div>
@@ -354,7 +354,7 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
             )}
           </div>
 
-          <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 bg-surface px-4 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
+          <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-surface px-4 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
             <Button type="button" variant="ghost" size="md" onClick={onClose} disabled={busy}>
               {t('compose.cancel')}
             </Button>

@@ -11,7 +11,7 @@ Get-Command node -ErrorAction SilentlyContinue
 node -p "JSON.stringify({platform:process.platform,arch:process.arch,node:process.version,exe:process.execPath})"
 ```
 
-缺 Node 时可安装官方 LTS；不需要替换用户全局 Node。便携版放 `.mailhub/runtime/`（Git 忽略）并核验 nodejs.org 发布的 SHASUMS256.txt。选择匹配系统架构的官方包，不从不明镜像下载运行时。
+缺 Node 时可安装官方 LTS；不需要替换用户全局 Node。便携版放 `.mailhub/runtime/`（Git 忽略）并核验 nodejs.org 发布的 SHASUMS256.txt。选择匹配系统架构的官方包。国内可以从 `https://npmmirror.com/mirrors/node/` 下载同版本的官方包，但必须用 nodejs.org 的 SHASUMS256.txt 核对哈希；不从其它来路不明的地方下载运行时。
 
 Windows 上部分 Node 版本可能在命令显示通过后仍以 libuv assertion 非零退出。遇到此类兼容性故障时保留日志，使用 Node 22 LTS 或 24 LTS 复测，不忽略退出码，也不为了通过而改测试。用变量保存实际路径：
 
@@ -22,7 +22,7 @@ $mailhubNode = 'C:\实际路径\node.exe'
 & $mailhubNode kit/scripts/setup.mjs configs
 ```
 
-configs 将路径记录在 `.mailhub/runtime.json`。`start.cmd`、`stop.cmd` 和 `mailhub.cmd` 随后都使用它，即使全局 PATH 指向其它 Node。记录的 Node 被移动/删除时会明确失败，先用新的可用路径重跑 configs。开发测试推荐最新 Node 22 LTS / 24 LTS（安全回归使用内置 node:sqlite）。
+configs 将路径记录在 `.mailhub/runtime.json`。`start.cmd`、`stop.cmd` 和 `mailhub.cmd` 随后都使用它，即使全局 PATH 指向其它 Node；macOS / Linux 的 `start.sh`、`stop.sh` 经 `kit/scripts/node.sh` 同样使用它。记录的 Node 被移动/删除时会明确失败，先用新的可用路径重跑 configs。开发测试推荐最新 Node 22 LTS / 24 LTS（安全回归使用内置 node:sqlite）。
 
 PowerShell 路径用 `& '带空格的路径\node.exe' 参数`；npm 用 `npm.cmd` 或当前运行时配套的 npm-cli.js。启动后台辅助进程时隐藏窗口；只有用户需要交互输入密码的终端才显示。执行删除/移动前验证绝对路径属于本任务，不能跨 shell 拼接删除命令。
 

@@ -5,7 +5,7 @@ description: 一次性搭建 agent：唯一目标是把用户自己的 MailHub �
 
 # MailHub 搭建 agent
 
-项目根：macOS / Linux 是 `~/mailhub-kit`，Windows 是 `%USERPROFILE%\mailhub-kit`。以下所有命令都在项目根执行。
+项目根：macOS / Linux 是 `~/mailhub-kit`；Windows 是用户主目录下的 `mailhub-kit`。PowerShell 写 `"$env:USERPROFILE\mailhub-kit"`，cmd 写 `%USERPROFILE%\mailhub-kit`，Git Bash 写 `~/mailhub-kit`。不要把 `%USERPROFILE%` 原样写进 PowerShell 或 Git Bash 的命令，它不会被展开。以下所有命令都在项目根执行。
 
 ## 0. 使命与完成标准
 
@@ -46,6 +46,7 @@ description: 一次性搭建 agent：唯一目标是把用户自己的 MailHub �
 - 真实的操作系统。以 `node -p "process.platform"` 或终端类型为准，不要凭浏览器外观猜。Windows 上不用 `osascript`、`open`、`chmod` 这类命令。
 - 当前在项目根：项目根下有 `kit/scripts/setup.mjs`。
 - `node -v` 能运行，并且版本不低于 22。
+- 你运行在用户本人能操作的电脑上（他自己的电脑，或他能 SSH 登录的机器），不是用户碰不到的云端容器。云端容器里用户没法输密码、打不开本地版，走不完流程，请用户改在自己电脑上的 AI 工具里执行。
 
 任一项不满足，先按第 3 节处理，再回来。然后运行：
 
@@ -64,15 +65,17 @@ Windows 上跑过 `configs` 之后，也可以用 `.\mailhub.cmd status`：它�
 
 ## 3. 找到项目、补齐环境（对用户透明，不打扰）
 
-1. 项目根不存在时：执行 `git clone https://github.com/xtianowner/mailhub-kit.git <项目根>`；没有 git 就下载 https://github.com/xtianowner/mailhub-kit/archive/refs/heads/main.zip，解压后把文件夹改名为 `mailhub-kit`；用户直接给了压缩包，就解压到项目根。项目根已存在时不要重新下载一份，也不要在别的空目录里另起一套。
+1. 项目根不存在时：执行 `git clone https://github.com/xtianowner/mailhub-kit.git <项目根>`；没有 git 就下载 https://github.com/xtianowner/mailhub-kit/archive/refs/heads/main.zip，解压后把文件夹改名为 `mailhub-kit`；用户直接给了压缩包，就解压到项目根。克隆和下载都失败（国内网络常见）时，请用户在自己的浏览器里下载那个 zip，把路径告诉你。项目根已存在时不要重新下载一份，也不要在别的空目录里另起一套。
 2. 运行 `node -v`。没有 Node，或主版本低于 22，就帮用户装官方 LTS（22 或 24）：
-   - macOS：从 https://nodejs.org 下载 LTS 版 .pkg 安装。或者有 Homebrew 时执行 `brew install node@22 && brew link --overwrite --force node@22`，这会替换用户原有的 node 链接，事后要告诉用户。
-   - Windows：`winget install OpenJS.NodeJS.LTS`，装完新开一个终端。
-   - Linux：先装 nvm：`curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash`，再执行 `nvm install 22`。
+   - macOS：从 https://nodejs.org 下载 LTS 版 .pkg 安装。或者有 Homebrew 时执行 `brew install node@22 && brew link --overwrite --force node@22`，这会替换用户原有的 node 链接，事后要告诉用户。没有管理员权限时用下面 Linux 的 nvm 做法，它不需要管理员权限。
+   - Windows：`winget install OpenJS.NodeJS.LTS`。你当前的进程拿不到新的 PATH，之后的命令直接用 `& "$env:ProgramFiles\nodejs\node.exe"` 代替 `node`。
+   - Linux：在**同一条命令**里装 nvm、加载它、装 Node 22：`export NVM_DIR="$HOME/.nvm"; curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && . "$NVM_DIR/nvm.sh" && nvm install 22 && nvm which 22`。你的每条命令都是新开的 shell，不会自动加载 nvm，所以之后的命令都用 `nvm which 22` 打印的绝对路径代替 `node`。
+   - 不管用哪种方式装的，第 5 节的 `configs` 都要用这个新 Node 来跑：它会把路径记进 `.mailhub/runtime.json`，之后 `start.sh` / `stop.sh` / `start.cmd` / `stop.cmd` / `mailhub.cmd` 都用这个 Node 启动，不受用户 PATH 里旧版 Node 的影响。
+   - 国内从 nodejs.org 下载很慢或失败：可从 `https://npmmirror.com/mirrors/node/` 下载同一版本的官方包，再用 nodejs.org 的 `SHASUMS256.txt` 核对哈希；拿不到 nodejs.org 的校验值时，如实告诉用户这一步没有核验。用 nvm 时在安装命令前加 `NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node`。
    - 用户已有旧版 Node、其它项目还要用它：不替换全局 Node，改用官方便携版，做法见 [Windows、Node 与授权恢复](references/platform-auth.md)。
    - 安装需要管理员密码时，请用户在自己的终端里执行那一条命令。
    - Windows、路径带空格、装了多套 Node、命令显示成功却以非零退出码结束（libuv 报错）时，也读那份参考文件。
-3. `node kit/scripts/doctor.mjs`，退出码为 0 即可继续。如果 `cloudflare_api` 不通，请用户确认网络；需要代理时，在当前终端设置 `HTTPS_PROXY`。
+3. `node kit/scripts/doctor.mjs`，退出码为 0 即可继续。`cloudflare_api` 或 `dns_query` 不通时：先确认不是你所在工具的沙箱拦了网络（见 AGENTS.md「权限」），再请用户确认网络。需要代理时，请用户开代理（TUN 模式最省事）。没开 TUN 就要在**每条命令前**带上代理变量，例如 `HTTPS_PROXY=http://127.0.0.1:7890 node kit/scripts/setup.mjs preflight`（端口以用户的代理软件为准；PowerShell 用 `$env:HTTPS_PROXY='http://127.0.0.1:7890'; node kit/scripts/setup.mjs preflight` 写在同一行）。你的每条命令都是新开的 shell，上一条设的变量不会保留。
 4. `node kit/scripts/setup.mjs deps` 安装依赖，首次约 1–3 分钟。国内网络失败时重跑，并加 `--registry https://registry.npmmirror.com`。
 
 ## 4. 一次性问询
@@ -154,7 +157,7 @@ node kit/scripts/setup.mjs plan
     | 网址冲突 | 给了新地址 | 用新地址重新 `init`，从 `preflight` 起重跑 |
     | 已有同名 Worker | 「是我之前用这套工具建的，要复用」 | 重跑时加 `--reuse-workers` |
     | 已有同名 Worker | 给了新前缀 | `init` 时加 `--prefix <新前缀>`，从 `preflight` 起重跑 |
-    | 无法确认（查询失败） | — | 稍等后重跑，不加任何放行参数。查询失败不等于「没有冲突」 |
+    | 无法确认（查询失败） | — | 稍等后重跑，不加任何放行参数。查询失败不等于「没有冲突」。连续 2 次都失败，多半是到公网 DNS 查询服务的网络不通，按第 3 节的代理做法处理后再重跑 |
 
     用户同意一次就会被记住，并绑定当时的域名、地址或前缀，之后重跑不用再加；换了域名或地址会重新提示。
   - `prepare-test` 提示测试地址已被停用：问用户是恢复它，还是换一个地址（`prepare-test --mail <地址>`）。不要自己去恢复。
@@ -168,7 +171,7 @@ node kit/scripts/setup.mjs plan
 | `deploy-api` / `deploy-web` 等上线超时 | 证书还在签发，过 2–3 分钟重跑同一步。不要为了通过去绕开 HTTPS |
 | `routing` 报没能自动开启，或没能设置兜底规则 | 按输出提示，请用户在 Cloudflare 网页上操作一次，再重跑 |
 | `npm ci` 失败或极慢 | `node kit/scripts/setup.mjs deps --registry https://registry.npmmirror.com` |
-| 连不上 Cloudflare 接口 | 网络问题。国内需要代理时，请用户开代理，并在终端设置 `HTTPS_PROXY` 后重跑 |
+| 连不上 Cloudflare 接口 | 先排除工具沙箱，再按网络问题处理：国内需要代理时，按第 3 节的做法在每条命令前带上代理变量后重跑 |
 | Windows 上命令显示成功，却以非零退出码结束 | 多半是 Node 版本兼容问题。保留输出，换 Node 22 或 24 LTS 重跑，见参考文件。不要忽略退出码 |
 
 ## 6. 受阻时：和用户核对现状，直到走通
@@ -202,7 +205,8 @@ node kit/scripts/setup.mjs plan
 - 你看不到用户那边有没有弹出窗口，所以只说「已经请求打开窗口」，不要说「窗口已经弹出来了」。
 - 用户说没看到窗口：把输出里那条手动命令发给他，请他在**他自己的**终端（Windows 用 PowerShell）里执行。重跑时可加 `--no-terminal`，不再尝试弹窗。
 - 超时（退出码 10）：提醒用户后重跑同一步。
-- 用户以后忘了密码、想改密码：让他自己运行 `node kit/scripts/set-login.mjs`。
+- 你在 SSH 远程机器上执行时：用户要先 `ssh` 登录那台机器，再在那里执行手动命令。
+- 用户以后忘了密码、想改密码：让他运行交付信息里那条「改登录密码」命令。它带着搭建时用的 Node 绝对路径，在任意目录都能执行。
 
 ## 8. 验收与交付
 
@@ -211,12 +215,13 @@ node kit/scripts/setup.mjs plan
 3. 把输出末尾的「交付信息」整理好发给用户（云端地址、用户名、本地版启动和停止方法、当前收信模式、已登记的测试地址），并请他**亲自确认三件事**：
    - **登录**：打开云端登录网页，用自己的用户名和密码登录。
    - **收信**：用自己的 Gmail / QQ 等邮箱，发一封信到 `test@<域名>`；一分钟内，网页的收件箱里能看到。
-   - **本地版**：运行 `./start.sh`（Windows 双击 `start.cmd`），浏览器能打开本地网页。
+   - **本地版**：先运行 `./stop.sh` 再运行 `./start.sh`（Windows 先双击 `stop.cmd` 再双击 `start.cmd`），浏览器能打开本地网页。先停再启，才算真正走了一遍他以后日常启动的方式。
+     你在 SSH 远程机器上搭建时，本地版只监听那台机器的 127.0.0.1：请用户在自己电脑上运行 `ssh -L <端口>:127.0.0.1:<端口> <用户名>@<主机>`（两边端口必须相同，本地版会核对页面来源的端口），保持这个窗口不关，再在浏览器打开 `http://127.0.0.1:<端口>`。端口以交付信息里的本地版地址为准。
 4. 用户说哪一件有问题，就按下表排查。修好后请他再试，直到三件都没问题：
 
    | 用户反馈 | 排查 |
    |---|---|
-   | 登录不上 | 用户名不区分大小写，密码区分大小写。请用户运行 `node kit/scripts/set-login.mjs` 重设一次再试 |
+   | 登录不上 | 用户名不区分大小写，密码区分大小写。请用户运行交付信息里的「改登录密码」命令重设一次再试 |
    | 登录提示「尝试过于频繁」 | 触发了登录限速（同一 IP 每 5 分钟 5 次，全部来源每分钟 30 次）。按提示的秒数等一等再试，不要反复试密码 |
    | 登录提示「登录服务暂时不可用」 | 登录限速用的数据库不可用。先重跑 `d1`（补齐数据库升级），再 `deploy-web`。不要为了能登录去掉限速 |
    | 网页里邮箱列表是空的 | 新部署在没登记、也没来信时本来就是空的。登记模式下要先创建邮箱，或跑 `prepare-test` |
@@ -249,9 +254,9 @@ node kit/scripts/setup.mjs plan
 |---|---|
 | 切换收信模式 | 请用户在网页「设置 → 收信模式」里选「登记后才收信」或「自动创建邮箱」，保存后云端和本地同时生效，已有邮件不删。先讲清取舍：自动模式任意名字都能直接收信，也会收下发往随机地址的垃圾信；登记模式更干净，但每个地址要先登记 |
 | 登记一个邮箱 | 网页「域名邮箱 → 新建」。自动模式下自动建出来的地址，切回登记模式后要在列表里点「登记」才能继续收信，已有邮件保留 |
-| 优化网页界面（样式、文案、布局） | **先问清楚**用户想要什么效果，必要时截图对照现状（例如现在的主色本来就是紫色）。代码在 `modules/unified-mail/frontend/src/`（React + Tailwind）：<br>· 颜色、字体等设计变量在 `styles/tokens.css`，其中渐变色是写死的色值，换主色时要一起改；<br>· 界面文字在 `i18n/messages.js`，中文、英文两套要同步改；<br>· 页面在 `pages/`。云端版只用到 `HubOverviewPage`、`UnifiedInboxPage`、`UnifiedCodePage`、`DomainMailPage`、`MessageDetailPage`、`CloudSettingsPage`、`LoginPage` 这几个；Hotmail 相关页面不会显示，不用改。<br>**本地预览**：先 `node kit/scripts/setup.mjs build`，再重启本地版（macOS / Linux：`./stop.sh && ./start.sh`；Windows：先双击 `stop.cmd`，再双击 `start.cmd`）。<br>**登录页只在云端出现**（本地版免登录，看不到登录页）：改登录页要先 `node kit/scripts/setup.mjs deploy-web`，再用浏览器的无痕窗口打开登录网址预览。<br>用户满意后发布到云端：`node kit/scripts/setup.mjs deploy-web` |
+| 优化网页界面（样式、文案、布局） | **先问清楚**用户想要什么效果，必要时截图对照现状（例如现在的主色本来就是青绿）。代码在 `modules/unified-mail/frontend/src/`（React + Tailwind）：<br>· 颜色、字体等设计变量在 `styles/tokens.css`：颜色写成空格分隔的 RGB 三元组（如 `--accent: 13 148 136`），浅色、深色各一套，半透明写 `rgb(var(--accent) / 0.12)`；换主色就改 `--accent`、`--accent-strong` 这一组和浅色的 `--accent-fill-hover`；改完要检查浅底小字和按钮白字的对比度不低于 4.5:1；<br>· 界面文字在 `i18n/messages.js`，中文、英文两套要同步改；<br>· 页面在 `pages/`。云端版只用到 `HubOverviewPage`（统一总览）、`DomainMailPage`（域名邮箱）、`MessageDetailPage`（邮件详情）、`CloudSettingsPage`（设置）、`LoginPage`（登录）这几个；Hotmail 相关页面不会显示，不用改。总览的组件在 `components/overview/`。<br>· 登录页、空状态、404 的插画在品牌包 `brand/default/` 里；想换成自己的形象，可以照它新建一个 `brand/<名字>/`，构建时设环境变量 `VITE_BRAND=<名字>`。<br>**本地预览**：先 `node kit/scripts/setup.mjs build`，再重启本地版（macOS / Linux：`./stop.sh && ./start.sh`；Windows：先双击 `stop.cmd`，再双击 `start.cmd`）。<br>**登录页只在云端出现**（本地版免登录，看不到登录页）：改登录页要先 `node kit/scripts/setup.mjs deploy-web`，再用浏览器的无痕窗口打开登录网址预览。<br>用户满意后发布到云端：`node kit/scripts/setup.mjs deploy-web` |
 | 换登录网页或数据接口的地址 | `init` 只传要改的参数，比如 `init --web-host <新地址>`，没传的会沿用原值。然后运行 `status`，从「下一步」起依次跑到 `verify`，中途会重新做冲突检查。旧地址如果不再需要，请用户到 Cloudflare → Workers & Pages → 对应的 Worker → Settings → Domains & Routes 里移除 |
-| 换登录用户名或密码 | 请用户自己运行 `node kit/scripts/set-login.mjs` |
+| 换登录用户名或密码 | 请用户运行交付信息里的「改登录密码」命令 |
 | 开启附件保存 | 先说明需要绑卡，用户同意后运行 `init --attachments`，然后 `status`，从「下一步」起依次跑到 `verify`。关闭附件用 `init --no-attachments` |
 | 再加一个域名 | 新域名要先在 Cloudflare 显示 Active，并确认它没在用别的邮箱。然后：① 登记域名：`node kit/scripts/setup.mjs wrangler d1 execute <前缀>-db --remote --yes -c .mailhub/generated/wrangler.api.json --command "INSERT INTO domains (id, domain, enabled, fixed_subdomain, random_subdomains, created_at) VALUES ('domain_<新域名>', '<新域名>', 1, NULL, '[]', datetime('now')) ON CONFLICT(domain) DO UPDATE SET enabled = 1"`；② 开启收信路由：`node kit/scripts/setup.mjs wrangler email routing enable <新域名>`；③ 请用户在 Cloudflare → 新域名 → Email → Email Routing → Routing rules 里，把 Catch-all 设为「Send to a Worker → <前缀>-inbox」；④ 登记模式下，先在网页「域名邮箱」里为新域名创建一个地址；⑤ 请用户给这个地址发一封测试信验证 |
 | 其它功能需求 | 先说明实现思路和影响，用户同意后再做。改了安装脚本、登录网关（`modules/unified-mail/cloud/`）或收信程序（`modules/cfmail-worker/`）时，部署前要跑：`cd kit && npm test && cd ..`，再跑 `node --test modules/cfmail-worker/tests/*.test.mjs modules/unified-mail/cloud/tests/*.test.mjs`；改了收信流程，再跑 `node kit/scripts/setup.mjs build && node kit/tests/e2e-local.mjs`。全部通过才能部署 |
@@ -276,9 +281,11 @@ node kit/scripts/setup.mjs plan
   - 对外发信需要 Workers 付费版（5 美元/月），本套件默认不开。
 - 更新套件：
   1. `git status` 看有没有用户自己的改动，有就先提交，不覆盖；
-  2. 在项目根执行 `git pull`，把 `kit/skill/mailhub-setup/` 重新复制到你的 skills 目录；
+  2. 在项目根执行 `git pull`，把 `kit/skill/mailhub-setup/` 重新复制到你的 skills 目录。没有 git（当初用 zip 安装）时改用下面的「zip 更新」；
   3. `node kit/scripts/local.mjs stop` 停掉本地版；
   4. `node kit/scripts/setup.mjs all` 按顺序重跑各步：`d1` 先补齐数据库升级，再部署新版 Worker，已有资源和密钥都会复用；
   5. `verify` 通过后，请用户在网页上确认一下登录和收信。
+
+  zip 更新（没有 git 时）：① 先问用户改过哪些文件（网页样式、文案等），把这些文件备份到项目根以外；② 把新版 zip 解压到一个临时目录；③ 把新版文件复制到项目根，**不碰 `.mailhub/`**（进度、配置和本机密钥都在里面）；④ 用户改过的文件和新版有冲突时，先和他确认怎么合并，不直接覆盖；⑤ 接着做上面的第 2 步后半句（重新复制 skill）和第 3–5 步。
 
   从「任意前缀自动收信」的旧版本升级时：数据库里已经有信箱或邮件的，升级后保持自动模式，收信行为不变；想改成登记模式，在设置页切换。

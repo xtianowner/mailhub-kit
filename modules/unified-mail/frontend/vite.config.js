@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 两种构建目标共用这份配置，靠 VITE_TARGET 区分：
@@ -19,8 +20,24 @@ const hubPort = Number(
   8080,
 )
 
+// 品牌包（src/brand/<名字>/）在构建时选定：VITE_BRAND 指向的目录存在就用它，否则退回 default。
+// 开源版没有作者品牌包，即使沿用私有版的构建脚本也会安静地退回 default，不会构建失败。
+// 只把选中的那一个解析进产物（别名 #brand），其它品牌包的图片不会被打包。
+const BRAND_ROOT = fileURLToPath(new URL('./src/brand/', import.meta.url))
+function pickBrand() {
+  const want = (process.env.VITE_BRAND || '').trim()
+  if (!want || want === 'default') return 'default'
+  if (/^[a-z0-9_-]+$/i.test(want) && fs.existsSync(path.join(BRAND_ROOT, want, 'brand.js'))) return want
+  console.warn(`[brand] 品牌包「${want}」不存在，退回 default`)
+  return 'default'
+}
+const BRAND = pickBrand()
+
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: { '#brand': path.join(BRAND_ROOT, BRAND) },
+  },
   server: {
     port: 5173,
     proxy: {

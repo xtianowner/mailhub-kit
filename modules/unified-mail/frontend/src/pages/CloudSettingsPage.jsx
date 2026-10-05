@@ -1,26 +1,36 @@
-import { useCallback, useEffect, useState } from 'react'
-import { LogOut, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useCallback, useEffect, useId, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, CheckCircle2, Inbox, LogOut, PlugZap, RefreshCw, ShieldCheck } from 'lucide-react'
 import { cfApi } from '../lib/cfmailDirect.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
 import { useAuth } from '../auth/AuthProvider.jsx'
-import { Button, Card } from '../components/ui.jsx'
-import { PageHeader } from '../components/hub.jsx'
-import { Link } from 'react-router-dom'
+import { EnvelopeSkeleton } from '../components/EnvelopeSkeleton.jsx'
+import { SettingsFrame, useSettingsSection } from '../components/SettingsFrame.jsx'
 
-// 云端版设置。
-//
-// 早先这里是「填两把 CFMail 密钥」的表单 —— 那要求用户在每台设备上背两串 40+ 字符
-// 的 token。现在密钥只活在网关 Worker 的加密环境变量里，浏览器一次都碰不到，
-// 收信设置持久化到云端，本地版与云端版共享。
+// 云端版设置。功能与改版前完全相同：收信模式切换（云端与本地同步）、连接测试、登出、安全说明。
+// 密钥只活在网关 Worker 的加密环境变量里，浏览器一次都碰不到。
+// 改版只是把它们分成两个子页（收信模式 / 连接与安全）放进侧栏子导航框架。
+// 连接测试和改版前一样，打开设置页就测一次（不论停在哪个子页），之后只在点「重新检测连接」时再测。
 export default function CloudSettingsPage() {
   const { t } = useLocale()
-  const toast = useToast()
-  const { logout } = useAuth()
+  const sections = [
+    { key: 'receiving', icon: Inbox, label: t('receiving.title'), desc: t('receiving.scope') },
+    { key: 'connection', icon: PlugZap, label: t('st.connection') },
+  ]
+  const current = useSettingsSection(sections)
+  const conn = useConnectionTest()
+  return (
+    <SettingsFrame title={t('cloud.title')} subtitle={t('cloud.subtitle')} sections={sections} current={current}>
+      {current === 'receiving' ? <ReceivingSettings /> : <Connection {...conn} />}
+    </SettingsFrame>
+  )
+}
 
+function useConnectionTest() {
+  const { t } = useLocale()
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState(null)
-
   const test = useCallback(async () => {
     setTesting(true)
     try {
@@ -34,73 +44,67 @@ export default function CloudSettingsPage() {
       setTesting(false)
     }
   }, [t])
-
   useEffect(() => {
     test()
   }, [test])
+  return { testing, result, test }
+}
+
+function Connection({ testing, result, test }) {
+  const { t, tn } = useLocale()
+  const toast = useToast()
+  const { logout } = useAuth()
 
   const onLogout = async () => {
     await logout()
     toast.info(t('auth.loggedOut'))
   }
 
+  const tone = testing ? 'muted' : result?.ok ? 'ok' : 'bad'
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
-      <PageHeader title={t('cloud.title')} subtitle={t('cloud.subtitle')} />
+    <div className="mh-form mh-form--settings">
+      <div className={`mh-conn mh-conn--${tone}`} aria-live="polite">
+        {testing ? (
+          <>
+            <RefreshCw size={16} className="mh-spin" aria-hidden />
+            <span>{t('common.loading')}</span>
+          </>
+        ) : result?.ok ? (
+          <>
+            <CheckCircle2 size={16} aria-hidden />
+            <span>
+              {t('cloud.ok')} · {tn('cloud.domains', result.domains.length)}
+              {result.domains.length ? <span className="mh-conn__list">{t('cloud.domains.list', { list: result.domains.join(' / ') })}</span> : null}
+            </span>
+          </>
+        ) : (
+          <>
+            <AlertTriangle size={16} aria-hidden />
+            <span>{t('cloud.failDetail', { label: t('cloud.fail'), detail: result?.detail || t('common.error') })}</span>
+          </>
+        )}
+      </div>
 
-      <ReceivingSettings />
+      <div className="mh-form__actions">
+        <button type="button" className="mh-btn mh-btn--quiet" onClick={test} disabled={testing}>
+          <RefreshCw size={15} className={testing ? 'mh-spin' : ''} aria-hidden />
+          {t('cloud.refresh')}
+        </button>
+      </div>
 
-      <Card className="flex items-start gap-2.5 border-success/25 bg-success/5 px-4 py-3">
-        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-success" aria-hidden />
-        <p className="text-sm text-muted">{t('cloud.security')}</p>
-      </Card>
+      <p className="mh-note mh-note--ok mh-note--box">
+        <ShieldCheck size={15} aria-hidden />
+        <span>{t('cloud.security')}</span>
+      </p>
+      <p className="mh-help">{t('cloud.where')}</p>
 
-      <Card className="flex flex-col gap-4 px-4 py-4 sm:px-5">
-        <div
-          className={`rounded border px-3 py-2.5 text-sm ${
-            testing
-              ? 'border-border bg-surface-2/50 text-muted'
-              : result?.ok
-                ? 'border-success/25 bg-success/10 text-success'
-                : 'border-danger/25 bg-danger/10 text-danger'
-          }`}
-          aria-live="polite"
-        >
-          {testing ? (
-            t('common.loading')
-          ) : result?.ok ? (
-            <>
-              {t('cloud.ok')} · {result.domains.length} {t('cloud.domains')}
-              {result.domains.length ? (
-                <span className="ml-1 font-mono text-xs opacity-80">
-                  （{result.domains.join(' / ')}）
-                </span>
-              ) : null}
-            </>
-          ) : (
-            <>
-              {t('cloud.fail')}：{result?.detail || t('common.error')}
-            </>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="md" onClick={test} loading={testing}>
-            <RefreshCw size={15} />
-            {t('cloud.refresh')}
-          </Button>
-          <button
-            type="button"
-            onClick={onLogout}
-            className="ml-auto inline-flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-xs text-subtle transition-colors duration-fast hover:text-danger"
-          >
-            <LogOut size={13} />
-            {t('cloud.logout')}
-          </button>
-        </div>
-      </Card>
-
-      <p className="text-xs text-subtle">{t('cloud.where')}</p>
+      <div className="mh-danger-zone">
+        <span className="mh-help">{t('st.logout.desc')}</span>
+        <button type="button" className="mh-btn mh-btn--quiet mh-btn--sm mh-btn--to-danger" onClick={onLogout}>
+          <LogOut size={14} aria-hidden />
+          {t('cloud.logout')}
+        </button>
+      </div>
     </div>
   )
 }
@@ -108,6 +112,7 @@ export default function CloudSettingsPage() {
 function ReceivingSettings() {
   const { t } = useLocale()
   const toast = useToast()
+  const id = useId()
   const [current, setCurrent] = useState(null)
   const [selected, setSelected] = useState('registered')
   const [loading, setLoading] = useState(true)
@@ -128,7 +133,9 @@ function ReceivingSettings() {
     }
   }, [t])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+  }, [load])
 
   const save = async () => {
     setSaving(true)
@@ -146,42 +153,61 @@ function ReceivingSettings() {
   }
 
   return (
-    <Card className="flex flex-col gap-4 p-4 sm:p-5">
-      <div>
-        <h2 className="font-semibold text-text">{t('receiving.title')}</h2>
-        <p className="mt-1 text-sm text-muted">{t('receiving.scope')}</p>
-      </div>
-      {loading ? <p aria-live="polite" className="text-sm text-muted">{t('common.loading')}</p> : (
+    <div className="mh-form mh-form--settings">
+      {loading ? (
+        <EnvelopeSkeleton rows={2} label={t('common.loading')} />
+      ) : (
         <>
-          <fieldset disabled={saving || current === null} className="flex flex-col gap-3">
+          <fieldset disabled={saving || current === null} className="mh-choices">
             <legend className="sr-only">{t('receiving.title')}</legend>
             {['registered', 'auto'].map((mode) => (
-              <label key={mode} className={`flex cursor-pointer items-start gap-3 rounded border p-3 ${
-                selected === mode ? 'border-accent bg-accent/10' : 'border-border bg-surface-2/40'
-              }`}>
-                <input type="radio" name="receive-mode" value={mode}
-                  checked={selected === mode} onChange={() => setSelected(mode)}
-                  className="mt-1 accent-accent" />
-                <span>
-                  <span className="text-sm font-medium text-text">{t(`receiving.${mode}`)}</span>
-                  {current === mode && <span className="ml-2 text-xs text-success">{t('receiving.active')}</span>}
-                  <span className="mt-1 block text-xs leading-relaxed text-muted">{t(`receiving.${mode}.hint`)}</span>
+              <label key={mode} className={`mh-choice ${selected === mode ? 'is-on' : ''}`} htmlFor={`${id}-${mode}`}>
+                <input
+                  id={`${id}-${mode}`}
+                  type="radio"
+                  name={`${id}-receive-mode`}
+                  value={mode}
+                  checked={selected === mode}
+                  onChange={() => setSelected(mode)}
+                />
+                <span className="mh-choice__text">
+                  <span className="mh-choice__title">
+                    {t(`receiving.${mode}`)}
+                    {current === mode && <span className="mh-pill mh-pill--ok">{t('receiving.active')}</span>}
+                  </span>
+                  <span className="mh-choice__desc">{t(`receiving.${mode}.hint`)}</span>
                 </span>
               </label>
             ))}
           </fieldset>
-          <p className="text-xs leading-relaxed text-muted">{t('receiving.history')}</p>
-          {selected === 'auto' && <p className="text-sm text-warning">{t('receiving.warning')}</p>}
+          <p className="mh-help">{t('receiving.history')}</p>
+          {selected === 'auto' && (
+            <p className="mh-note mh-note--warn mh-note--box">
+              <AlertTriangle size={14} aria-hidden />
+              <span>{t('receiving.warning')}</span>
+            </p>
+          )}
         </>
       )}
-      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" onClick={save} loading={saving}
-          disabled={loading || current === null || selected === current}>{t('receiving.save')}</Button>
-        <Button variant="ghost" onClick={load} disabled={loading || saving}>{t('receiving.reload')}</Button>
-        <Link to="/domain" className="ml-auto text-sm text-accent hover:underline">{t('receiving.register')}</Link>
+      {error && (
+        <p role="alert" className="mh-formerr">
+          <AlertTriangle size={15} aria-hidden />
+          <span>{error}</span>
+        </p>
+      )}
+      <div className="mh-form__actions">
+        <button type="button" className="mh-btn mh-btn--primary" onClick={save} disabled={saving || loading || current === null || selected === current}>
+          {saving && <span className="mh-btn__spin" aria-hidden />}
+          {t('receiving.save')}
+        </button>
+        <button type="button" className="mh-btn mh-btn--quiet" onClick={load} disabled={loading || saving}>
+          {t('receiving.reload')}
+        </button>
+        <Link to="/domain" className="mh-linkbtn mh-form__end">
+          {t('receiving.register')}
+        </Link>
       </div>
-      <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted">{t('receiving.loginProtection')}</p>
-    </Card>
+      <p className="mh-help mh-help--sep">{t('receiving.loginProtection')}</p>
+    </div>
   )
 }

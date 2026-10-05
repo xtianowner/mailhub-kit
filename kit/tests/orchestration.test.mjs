@@ -304,6 +304,7 @@ test("验收拒绝未知收信模式，不把旧部署误判为安全配置完�
   const r = await setup("verify");
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /broken-mode/);
+  assert.match(r.out, /下一步：先重跑 d1/, "失败项要告诉 AI 下一步做什么，不只给原始返回值");
   patch({ receiveMode: "registered" });
   assert.equal((await setup("verify")).code, 0);
 });
@@ -331,6 +332,11 @@ test("完成标准：当场重跑验收 + 查到测试信才算完成；过期�
   assert.match(r.out, /还没查到发给 test@demo\.test 的邮件/);
 
   patch({ testMails: { "test@demo.test": [{ subject: "hi", received_at: "2026-09-28T10:00:00Z" }] } });
+  r = await setup("confirm");
+  assert.equal(r.code, 10, "登记测试地址之前就有的旧信，不能当作这次收信的证据");
+  assert.match(r.out, /早于登记测试地址的时间/);
+
+  patch({ testMails: { "test@demo.test": [{ subject: "hi", received_at: new Date().toISOString() }] } });
   // 收信路由被人关掉了：旧记录里 verify 还是 ✅，但 confirm 当场重跑验收，必须拒绝
   patch({ routing: { enabled: false, status: "disabled" } });
   r = await setup("confirm");
@@ -355,6 +361,8 @@ test("重新 init 只改传入的参数；换前缀后要重新检查同名 Work
   let st = JSON.parse((await setup("status", "--json")).out);
   assert.equal(st.user_confirmed, null, "配置变了，旧的确认作废");
   assert.equal(st.next_step, "zone");
+  const state = JSON.parse(fs.readFileSync(path.join(STATE_DIR, "state.json"), "utf8"));
+  assert.equal(state.test_prepared, null, "配置变了，旧的测试地址登记时间也作废，confirm 要等新信");
 
   r = await setup("init", "--prefix", "mh2");
   assert.equal(r.code, 0, r.out);

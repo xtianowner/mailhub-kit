@@ -56,7 +56,7 @@ const INLINE_PATTERNS = [
   {
     name: "generic_code_label",
     score: 88,
-    re: /\bcode\b(?:\s|[：:：\-–—]){0,6}([A-Z0-9]{4,10})/gi,
+    re: /\bcode\b(?:\s|[：:：\-–—]){0,6}(?:is\s+)?([A-Z0-9]{4,10})/gi,
   },
 ];
 
@@ -209,7 +209,8 @@ function collectInlineCandidates(source, text) {
     const regex = new RegExp(pattern.re.source, pattern.re.flags);
     let match;
     while ((match = regex.exec(normalized)) !== null) {
-      const code = String(match[1] || "").toUpperCase();
+      // 码原样保留：区分大小写的码（aB3dE9）改成大写就废了。比较类判断各自忽略大小写。
+      const code = String(match[1] || "");
       if (!looksLikeCodeToken(code)) continue;
 
       const snippet = snippetAround(normalized, match.index);
@@ -251,7 +252,7 @@ function collectLineCandidates(source, text) {
     const tokenMatches = line.match(/\b[A-Z0-9]{4,10}\b/gi) || [];
 
     for (const tokenRaw of tokenMatches) {
-      const code = tokenRaw.toUpperCase();
+      const code = tokenRaw;
       if (!looksLikeCodeToken(code)) continue;
 
       let score = sourceWeight(source) + tokenWeight(code);
@@ -2632,10 +2633,12 @@ if (request.method === "POST" && url.pathname === "/admin/mailboxes/meta") {
   });
 }
 
-// GET /admin/messages/recent?limit=&offset=&q=&only_codes=
+// GET /admin/messages/recent?limit=&offset=&q=&only_codes=&group=
 // **跨全部信箱**按时间倒序的信息流。原来只有 /api/messages/latest（只回 1 封）
 // 和 /admin/mails（必须带地址），统一收件箱因此只能靠猜地址扇出。
 // LEFT JOIN：mailbox 已被删或历史上落进 inbox_test 的孤儿消息也要出现，不静默吞掉。
+// group：去掉首尾空白后按 mailboxes.group_name 精确匹配；为空则不过滤。
+// 指定 group 时孤儿消息（mb 为 NULL）自然不会命中——它们不属于任何分组。
 if (request.method === "GET" && url.pathname === "/admin/messages/recent") {
   const token = extractAdminToken(request, {}, url);
   if (!isAdminAuthorized(token, env)) {
@@ -2643,6 +2646,7 @@ if (request.method === "GET" && url.pathname === "/admin/messages/recent") {
   }
 
   const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+  const group = (url.searchParams.get("group") || "").trim();
   const onlyCodes = url.searchParams.get("only_codes") === "true";
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
   const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
@@ -2655,6 +2659,10 @@ if (request.method === "GET" && url.pathname === "/admin/messages/recent") {
   if (q) {
     conds.push("(lower(m.subject) LIKE ? OR lower(m.mail_from) LIKE ? OR lower(mb.email) LIKE ?)");
     binds.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (group) {
+    conds.push("mb.group_name = ?");
+    binds.push(group);
   }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   binds.push(limit, offset);

@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Code2, Eye, ImageOff, Type } from 'lucide-react'
+import { Code2, Eye, ImageOff, Type, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '../lib/cn.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useTheme } from '../theme/ThemeProvider.jsx'
+import { MailFrame, ZOOM_STEPS } from './MailFrame.jsx'
 
 /* ── 邮件正文渲染 ─────────────────────────────────────────────
    邮件 HTML 是**不可信输入**（任何人都能往你信箱里发东西），所以：
 
    1. 一律放进 `<iframe sandbox>` 且**不给 allow-scripts** —— 脚本、表单、
-      顶层跳转、同源访问全部禁掉。绝不用 innerHTML 直接塞。
+      弹窗、顶层跳转全部禁掉。绝不用 innerHTML 直接塞。沙箱只放开 allow-same-origin，
+      让父页读得到排版尺寸（适应宽度 / 高度跟随内容，见 MailFrame.jsx）；没有脚本权限，
+      邮件代码在这个文档里跑不起来。
    2. 默认**屏蔽远程图片**。营销/钓鱼邮件里的 1x1 追踪像素靠远程图片请求
       回报「这封信被谁在什么时候打开了」，默认加载等于自动回执。想看再点。
    3. iframe 里再挂一道 CSP，把默认拉取全部掐掉，只在用户点了「显示图片」
       后放行 img —— 双保险，不依赖单一机制。
 
-   两种视图：原始排版（HTML）/ 纯文本。只有一种时不显示切换。 */
+   两种视图：原始排版（HTML）/ 纯文本。只有一种时不显示切换。
+   原始排版带缩放：默认「适应宽度」（比可用宽度宽的邮件整体等比缩小到完整可见），
+   可缩小 / 放大 / 100%，放大超过宽度时外框左右滚动，内容不会被裁掉。 */
 
 const INLINE_IMAGE_TYPES = new Set([
   'image/png',
@@ -97,18 +102,27 @@ function buildSrcDoc(html, { allowRemoteImages, dark, textColor, accentColor }) 
     : "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:;"
   const body = allowRemoteImages ? html : blockRemoteImages(html)
   // 邮件 HTML 自带一堆行内样式，这里只补最基础的可读性底座，不去覆盖它的排版。
-  return `<!doctype html><html><head>
+  // body 的 min-width: min-content：内容比视口宽时把文档撑开，而不是溢出到视口外 ——
+  // 这样排版宽度量得准，居中的固定宽度表格也不会出现滚不回来的左侧负偏移。
+  // 表格不再强压 max-width:100%（固定宽度的表格压不动，只会挤坏排版）；宽出来的交给外层整体缩放。
+  // data-mh-mail 是给父页认文档用的标记；data-mh-measured 由父页量到尺寸后打上，
+  // 此后 iframe 与内容一样大，不需要也不应该再出现内部滚动条。
+  return `<!doctype html><html data-mh-mail><head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <base target="_blank">
 <style>
   :root { color-scheme: ${dark ? 'dark' : 'light'}; }
-  html,body { margin:0; padding:16px; background:transparent;
+  html { margin:0; padding:0; background:transparent; }
+  body { margin:0; padding:16px; background:transparent;
+    min-width:min-content !important;
     color:${textColor};
     font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     overflow-wrap:anywhere; word-break:break-word; }
+  html[data-mh-measured] { overflow:hidden !important; }
+  html[data-mh-measured] body { overflow:visible !important; }
   a { color:${accentColor}; }
-  img,table { max-width:100% !important; height:auto; }
+  img { max-width:100% !important; height:auto; }
   table { border-collapse:collapse; }
   pre { white-space:pre-wrap; }
 </style></head><body>${body}</body></html>`
@@ -121,11 +135,26 @@ export function MailBody({ html, text, inlineImages = [], messageKey, className 
   const hasText = Boolean(text && text.trim())
   const [mode, setMode] = useState(hasHtml ? 'html' : 'text')
   const [allowRemoteImages, setAllowRemoteImages] = useState(false)
+  // 缩放：'fit' = 适应宽度（默认）；数字 = 固定比例。scale 是当前实际比例（适应宽度时由 MailFrame 算出）
+  const [zoom, setZoom] = useState('fit')
+  const [scale, setScale] = useState(1)
 
   useEffect(() => {
     setMode(hasHtml ? 'html' : 'text')
     setAllowRemoteImages(false)
+    setZoom('fit')
   }, [messageKey, html, text, hasHtml])
+
+  const current = zoom === 'fit' ? scale : zoom
+  const pct = Math.round(current * 100)
+  const zoomOut = () => {
+    const next = [...ZOOM_STEPS].reverse().find((z) => z < current - 0.005)
+    if (next) setZoom(next)
+  }
+  const zoomIn = () => {
+    const next = ZOOM_STEPS.find((z) => z > current + 0.005)
+    if (next) setZoom(next)
+  }
 
   const dark = theme !== 'light'
   const emailHtml = useMemo(() => replaceCidImages(html || '', inlineImages), [html, inlineImages])
@@ -135,8 +164,13 @@ export function MailBody({ html, text, inlineImages = [], messageKey, className 
     () => {
       if (!hasHtml || typeof document === 'undefined') return ''
       const styles = getComputedStyle(document.documentElement)
-      const textColor = styles.getPropertyValue('--text').trim() || 'currentColor'
-      const accentColor = styles.getPropertyValue('--accent-hover').trim() || 'currentColor'
+      // 设计变量是空格分隔的 RGB 三元组（「13 148 136」），进 iframe 前包成完整颜色
+      const rgbVar = (name) => {
+        const v = styles.getPropertyValue(name).trim()
+        return v ? `rgb(${v})` : 'currentColor'
+      }
+      const textColor = rgbVar('--text')
+      const accentColor = rgbVar('--accent-ink')
       return buildSrcDoc(emailHtml, {
         allowRemoteImages,
         dark,
@@ -174,13 +208,61 @@ export function MailBody({ html, text, inlineImages = [], messageKey, className 
                     'inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-fast',
                     mode === key
                       ? 'border-accent/40 bg-accent/10 text-accent'
-                      : 'border-border/70 bg-surface-2/50 text-muted hover:text-text',
+                      : 'border-border bg-surface-2 text-muted hover:text-text',
                   )}
                 >
                   <Icon size={12} aria-hidden />
                   {label}
                 </button>
               ))}
+            </div>
+          )}
+
+          {hasHtml && mode === 'html' && (
+            <div className="mh-zoom" role="group" aria-label={t('md.zoom.group', { pct })}>
+              <button
+                type="button"
+                className="mh-zoom__btn"
+                onClick={zoomOut}
+                disabled={current <= ZOOM_STEPS[0] + 0.005}
+                aria-label={t('md.zoom.out')}
+                title={t('md.zoom.out')}
+              >
+                <ZoomOut size={14} aria-hidden />
+              </button>
+              <span className="mh-zoom__pct" aria-hidden>
+                {pct}%
+              </span>
+              <button
+                type="button"
+                className="mh-zoom__btn"
+                onClick={zoomIn}
+                disabled={current >= ZOOM_STEPS[ZOOM_STEPS.length - 1] - 0.005}
+                aria-label={t('md.zoom.in')}
+                title={t('md.zoom.in')}
+              >
+                <ZoomIn size={14} aria-hidden />
+              </button>
+              <span className="mh-zoom__sep" aria-hidden />
+              <button
+                type="button"
+                className="mh-zoom__btn mh-zoom__btn--text"
+                onClick={() => setZoom('fit')}
+                aria-pressed={zoom === 'fit'}
+                title={t('md.zoom.fitHint')}
+              >
+                {t('md.zoom.fit')}
+              </button>
+              <button
+                type="button"
+                className="mh-zoom__btn mh-zoom__btn--text"
+                onClick={() => setZoom(1)}
+                aria-pressed={zoom === 1}
+                aria-label={t('md.zoom.actualHint')}
+                title={t('md.zoom.actualHint')}
+              >
+                {t('md.zoom.actual')}
+              </button>
             </div>
           )}
 
@@ -191,8 +273,8 @@ export function MailBody({ html, text, inlineImages = [], messageKey, className 
               className={cn(
                 'ml-auto inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-fast',
                 allowRemoteImages
-                  ? 'border-border/70 bg-surface-2/50 text-muted hover:text-text'
-                  : 'border-warning/25 bg-warning/10 text-warning hover:border-warning/40',
+                  ? 'border-border bg-surface-2 text-muted hover:text-text'
+                  : 'border-warning/40 bg-warning/5 text-warning hover:border-warning',
               )}
               title={allowRemoteImages ? t('md.images.shown') : t('md.images.blocked')}
             >
@@ -204,15 +286,9 @@ export function MailBody({ html, text, inlineImages = [], messageKey, className 
       ) : null}
 
       {mode === 'html' && hasHtml ? (
-        <iframe
-          // sandbox 不给 allow-scripts：邮件里的 JS 一律不执行。
-          sandbox=""
-          srcDoc={srcDoc}
-          title={t('md.body')}
-          className="h-[60vh] w-full rounded border border-border/60 bg-surface-2/30"
-        />
+        <MailFrame srcDoc={srcDoc} title={t('md.body')} zoom={zoom} onScale={setScale} />
       ) : (
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border/60 bg-surface-2/30 p-4 font-mono text-xs leading-relaxed text-text">
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-surface-2 p-4 font-mono text-xs leading-relaxed text-text">
           {text || ''}
         </pre>
       )}

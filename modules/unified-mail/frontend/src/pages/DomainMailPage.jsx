@@ -1,51 +1,105 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, Copy, Info, KeyRound, MailPlus, Plus, Search, Trash2 } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Clock,
+  Globe,
+  Inbox,
+  Info,
+  KeyRound,
+  Layers,
+  MailPlus,
+  Pencil,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  Trash2,
+} from 'lucide-react'
 import { hubApi, IS_CLOUD } from '../lib/hubApi.js'
 import { fmtDateTime, fmtRelative } from '../lib/format.js'
+import { useNow } from '../lib/motion.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
-import { Badge, Button, Card, CopyCode } from '../components/ui.jsx'
-import { StateBlock } from '../components/StateBlock.jsx'
-import { PageHeader, UpstreamBar, useUpstreams } from '../components/hub.jsx'
+import { PageHeader, mergeGroupCounts, useUpstreams } from '../components/hub.jsx'
 import { ComposeMailDialog } from '../components/ComposeMailDialog.jsx'
 import { MailboxMetaDialog } from '../components/MailboxMetaDialog.jsx'
-import { useCopy } from '../lib/useCopy.js'
+import { EmptyState } from '../components/EmptyState.jsx'
+import { EnvelopeSkeleton } from '../components/EnvelopeSkeleton.jsx'
+import { VirtualList } from '../components/VirtualList.jsx'
+import { SearchCommand } from '../components/overview/SearchCommand.jsx'
+import { Count, StatusLight } from '../components/overview/StatCard.jsx'
+import { CreateMailboxDialog } from '../components/domain/CreateMailboxDialog.jsx'
+import { ActBtn, CodeCell, CopyAddr, GroupSelect, Note, StatusPill, rowSpotlight, tiltReset, tiltSpot } from '../components/work.jsx'
 
-// 域名邮箱页：管自有域名上的信箱。
-// Worker 提供 /admin/mailboxes 时，这张表以**线上真实存在的信箱**为准，
-// 本地只保存用户写的备注/分组；如果接口不可用，页面只显示手动登记过的地址并明确提示范围。
+const ALL = '*'
+
+function patchParams(params, patch) {
+  const next = new URLSearchParams(params)
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === '' || v === undefined || v === null) next.delete(k)
+    else next.set(k, v)
+  }
+  return next
+}
+
+const domainOf = (email) => String(email || '').split('@')[1]?.toLowerCase() || ''
+const ts = (iso) => Date.parse(iso || '') || 0
+
+/** 信箱归到哪个域名：已启用域名本身或它的子域都算它的；归不上的按信箱自己的域名单列 */
+function makeRootOf(domains) {
+  const roots = [...new Set(domains.map((d) => String(d).toLowerCase()))].sort((a, b) => b.length - a.length)
+  return (email) => {
+    const dom = domainOf(email)
+    return roots.find((r) => dom === r || dom.endsWith(`.${r}`)) || dom
+  }
+}
+
+/* 域名邮箱（干活层）。两层，同一个地址（/domain）：
+   第一层 —— 每个域名一张卡（信箱数、最近来信、带验证码的信箱数），悬停轻微倾斜 + 聚光；第一张是「全部信箱」。
+   第二层 —— ?d=<域名>（或 * = 全部）：这个域名下的信箱列表，行多时虚拟滚动；搜索时直接进第二层看全部域名里的结果。
+   数据与改版前相同：信箱列表只取一次（limit 1000），搜索、分组、按域名分都在前端对这一份做，
+   不为卡片或搜索另发请求（云端每多一次列表请求就多一次 D1 聚合查询）。只有列表超出单次上限时，搜索才交给后端。
+   近 7 天收信折线：现有接口只给每个信箱的「最近来信时间」和总邮件数，算不出逐日数量，所以不做。
+   本地版 / 云端版差异照旧：云端没有「移出邮箱簿」，「登记」只出现在云端收信自动建的信箱上。 */
 export default function DomainMailPage() {
-  const { t, locale } = useLocale()
+  const { t, tn, locale } = useLocale()
   const toast = useToast()
-  const copy = useCopy()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
+  const now = useNow(30_000)
 
-  const q = params.get('q') || ''
-  const [searchInput, setSearchInput] = useState(q)
+  const q = (params.get('q') || '').trim()
+  const group = (params.get('group') || '').trim()
+  const d = (params.get('d') || '').trim().toLowerCase()
+  const layer2 = Boolean(d) || q !== ''
+
   const [rows, setRows] = useState([])
-  const [listState, setListState] = useState('loading')
+  const [state, setState] = useState('loading')
+  const [truncated, setTruncated] = useState(false)
+  const [serverHits, setServerHits] = useState(null)
   const [domains, setDomains] = useState({ domains: [], cfmail_configured: true })
   const { upstreams, state: upState, workerDiscovery, reload: reloadUp } = useUpstreams()
-  const [truncated, setTruncated] = useState(false)
   const [rowBusy, setRowBusy] = useState({})
   const [rowCode, setRowCode] = useState({})
   const [composeOpen, setComposeOpen] = useState(false)
-  const [editingMailbox, setEditingMailbox] = useState(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+
+  const setParam = useCallback((patch) => setParams((prev) => patchParams(prev, patch), { replace: true }), [setParams])
 
   const load = useCallback(async () => {
-    setListState('loading')
+    setState((s) => (s === 'ready' || s === 'refreshing' ? 'refreshing' : 'loading'))
     try {
-      const res = await hubApi.mailboxes({ q: q || undefined, source: 'domain', limit: 1000 })
+      const res = await hubApi.mailboxes({ source: 'domain', limit: 1000 })
       setTruncated(!!res.truncated)
       setRows(res.rows || [])
-      setListState('ready')
+      setState('ready')
     } catch {
-      setListState('error')
+      setState('error')
     }
-  }, [q])
-
+  }, [])
   const loadDomains = useCallback(async () => {
     try {
       setDomains(await hubApi.domains())
@@ -53,399 +107,500 @@ export default function DomainMailPage() {
       /* 非致命：拿不到域名白名单时保留页面其余功能 */
     }
   }, [])
-
   useEffect(() => {
     load()
   }, [load])
   useEffect(() => {
     loadDomains()
   }, [loadDomains])
+
+  // 列表超出单次上限（看不到全部）时，搜索才交给后端，和改版前一样按关键词查
   useEffect(() => {
-    setSearchInput(q)
-  }, [q])
-
-  const onSearch = (e) => {
-    e.preventDefault()
-    const next = new URLSearchParams(params)
-    if (searchInput.trim()) next.set('q', searchInput.trim())
-    else next.delete('q')
-    setParams(next, { replace: true })
-  }
-
-  const onGetCode = async (row) => {
-    setRowBusy((m) => ({ ...m, [row.email]: 'code' }))
-    try {
-      const res = await hubApi.code(row.email, 'domain')
-      setRowCode((m) => ({ ...m, [row.email]: res }))
-      if (res.found) toast.success(t('code.result.found'))
-      else toast.info(res.error || t('code.result.none'))
-      load()
-    } catch (err) {
-      toast.error(err?.userMessage || t('common.error'))
-    } finally {
-      setRowBusy((m) => ({ ...m, [row.email]: undefined }))
+    if (!truncated || !q) {
+      setServerHits(null)
+      return undefined
     }
-  }
-
-  const onRegister = async (row) => {
-    setRowBusy((m) => ({ ...m, [row.email]: 'register' }))
-    try {
-      const at = row.email.lastIndexOf('@')
-      await hubApi.createMailbox({ name: row.email.slice(0, at), domain: row.email.slice(at + 1) })
-      toast.success(t('dom.registered'))
-      await load()
-    } catch (err) {
-      toast.error(err?.userMessage || t('common.error'))
-    } finally {
-      setRowBusy((m) => ({ ...m, [row.email]: undefined }))
+    let cancelled = false
+    hubApi
+      .mailboxes({ q, source: 'domain', limit: 1000 })
+      .then((r) => !cancelled && setServerHits(r.rows || []))
+      .catch(() => !cancelled && setServerHits(null))
+    return () => {
+      cancelled = true
     }
-  }
+  }, [truncated, q])
 
-  const onRemove = async (row) => {
-    if (!window.confirm(`${t('dom.remove.confirm')}\n${row.email}`)) return
-    setRowBusy((m) => ({ ...m, [row.email]: 'remove' }))
-    try {
-      await hubApi.unregisterMailbox(row.email)
-      toast.info(t('dom.removed'))
-      load()
-    } catch (err) {
-      toast.error(err?.userMessage || t('common.error'))
-    } finally {
-      setRowBusy((m) => ({ ...m, [row.email]: undefined }))
+  /* ── 派生 ── */
+  const domainList = useMemo(() => domains.domains || [], [domains])
+  const rootOf = useMemo(() => makeRootOf(domainList), [domainList])
+  const inGroup = useCallback((r) => !group || (r.group || '').trim() === group, [group])
+
+  const cards = useMemo(() => {
+    const map = new Map(domainList.map((dm) => [dm.toLowerCase(), { domain: dm.toLowerCase(), count: 0, last: '', withCode: 0, auto: 0 }]))
+    const all = { domain: ALL, count: 0, last: '', withCode: 0, auto: 0 }
+    for (const r of rows) {
+      if (!inGroup(r)) continue
+      const root = rootOf(r.email)
+      const c = map.get(root) || { domain: root, count: 0, last: '', withCode: 0, auto: 0 }
+      for (const x of [c, all]) {
+        x.count += 1
+        if (ts(r.last_mail_at) > ts(x.last)) x.last = r.last_mail_at
+        if (r.last_code) x.withCode += 1
+        if (r.status === 'auto') x.auto += 1
+      }
+      map.set(root, c)
     }
-  }
+    const list = [...map.values()].sort((a, b) => b.count - a.count || a.domain.localeCompare(b.domain))
+    return [all, ...list]
+  }, [rows, domainList, rootOf, inGroup])
 
-  const onMetaSaved = (next) => {
-    setRows((current) =>
-      current.map((row) => (row.email === next.email ? { ...row, ...next } : row)),
+  const byDomain = useMemo(() => {
+    const base = serverHits ?? rows
+    return d && d !== ALL ? base.filter((r) => rootOf(r.email) === d) : base
+  }, [serverHits, rows, d, rootOf])
+  const visible = useMemo(() => {
+    const ql = q.toLowerCase()
+    return byDomain.filter(
+      (r) => inGroup(r) && (!ql || serverHits || [r.email, r.label, r.group].some((x) => (x || '').toLowerCase().includes(ql))),
+    )
+  }, [byDomain, inGroup, q, serverHits])
+  const groupOpts = useMemo(
+    () => mergeGroupCounts([(layer2 ? byDomain : rows).map((r) => ({ name: r.group, count: 1 }))], group),
+    [layer2, byDomain, rows, group],
+  )
+
+  /* ── 行操作（与改版前相同的调用）── */
+  const busyOn = (key, v) => setRowBusy((m) => ({ ...m, [key]: v }))
+  const handlers = useRef({})
+  handlers.current = {
+    code: async (row) => {
+      busyOn(row.email, 'code')
+      try {
+        const res = await hubApi.code(row.email, 'domain')
+        setRowCode((m) => ({ ...m, [row.email]: res }))
+        if (res.found) toast.success(t('code.result.found'))
+        else toast.info(res.error || t('code.result.none'))
+        load()
+      } catch (err) {
+        toast.error(err?.userMessage || t('common.error'))
+      } finally {
+        busyOn(row.email, undefined)
+      }
+    },
+    register: async (row) => {
+      busyOn(row.email, 'register')
+      try {
+        const at = row.email.lastIndexOf('@')
+        await hubApi.createMailbox({ name: row.email.slice(0, at), domain: row.email.slice(at + 1) })
+        toast.success(t('dom.registered'))
+        await load()
+      } catch (err) {
+        toast.error(err?.userMessage || t('common.error'))
+      } finally {
+        busyOn(row.email, undefined)
+      }
+    },
+    remove: async (row) => {
+      if (!window.confirm(`${t('dom.remove.confirm')}\n${row.email}`)) return
+      busyOn(row.email, 'remove')
+      try {
+        await hubApi.unregisterMailbox(row.email)
+        toast.info(t('dom.removed'))
+        load()
+      } catch (err) {
+        toast.error(err?.userMessage || t('common.error'))
+      } finally {
+        busyOn(row.email, undefined)
+      }
+    },
+    mails: (row) => navigate(`/?q=${encodeURIComponent(row.email)}`), // 收件箱已并进统一总览：按这个地址搜最近邮件
+    edit: (row) => setEditing(row),
+  }
+  const act = useMemo(
+    () => ({
+      code: (r) => handlers.current.code(r),
+      register: (r) => handlers.current.register(r),
+      remove: (r) => handlers.current.remove(r),
+      mails: (r) => handlers.current.mails(r),
+      edit: (r) => handlers.current.edit(r),
+    }),
+    [],
+  )
+  const onMetaSaved = (next) => setRows((cur) => cur.map((row) => (row.email === next.email ? { ...row, ...next } : row)))
+
+  /* ── 导航：进入某个域名推一条历史（浏览器后退回到卡片） ── */
+  const hrefFor = (dom) => {
+    const s = patchParams(params, { d: dom, q: '' }).toString()
+    return s ? `/domain?${s}` : '/domain'
+  }
+  const backToCards = () => setParam({ d: '', q: '' })
+
+  const spot = useMemo(() => rowSpotlight('.mh-mrow'), [])
+  const renderItem = useCallback(
+    (r) => (
+      <MailboxRow r={r} busy={rowBusy[r.email]} fresh={rowCode[r.email]} q={q} now={now} locale={locale} t={t} act={act} />
+    ),
+    [rowBusy, rowCode, q, now, locale, t, act],
+  )
+  const wide = typeof window !== 'undefined' && window.innerWidth >= 1100
+
+  /* ── 上游状态条 ── */
+  const upLabel = (u) =>
+    u.ok ? t('up.ok') : u.detail?.includes('未配置') || u.detail?.includes('密钥') ? t('up.unconfigured') : t('up.down')
+  const statusBar = (
+    <div className="mh-upbar">
+      <span className="mh-upbar__title">{t('up.title')}</span>
+      {upState === 'loading' && <span className="mh-upbar__item">{t('common.loading')}</span>}
+      {upstreams.map((u) => {
+        const hint = t(u.source === 'hotmail' ? 'up.hotmail.hint' : 'up.domain.hint')
+        return (
+          <span key={u.source} className={`mh-upbar__item ${u.ok ? '' : 'is-warn'}`} title={u.detail ? `${hint}\n${u.detail}` : hint}>
+            <StatusLight tone={u.ok ? 'ok' : 'warn'} label={`${t(u.source === 'hotmail' ? 'src.hotmail' : 'src.domain')} · ${upLabel(u)}`} />
+            <span aria-hidden>{t(u.source === 'hotmail' ? 'src.hotmail' : 'src.domain')}</span>
+            <b aria-hidden>{upLabel(u)}</b>
+          </span>
+        )
+      })}
+      {!IS_CLOUD && upState === 'ready' && workerDiscovery === false && (
+        <span className="mh-upbar__item is-warn" title={t('up.worker.legacy.hint')}>
+          <AlertTriangle size={13} aria-hidden />
+          <b>{t('up.worker.legacy')}</b>
+        </span>
+      )}
+      <button type="button" className="mh-icon-btn mh-upbar__retry" onClick={reloadUp} aria-label={t('up.retry')} title={t('up.retry')}>
+        <RefreshCw size={15} className={upState === 'loading' ? 'mh-spin' : ''} aria-hidden />
+      </button>
+    </div>
+  )
+
+  const registryNote = (
+    <Note icon={workerDiscovery === false ? AlertTriangle : Info} tone={workerDiscovery === false ? 'warn' : 'info'}>
+      {t(workerDiscovery === false ? 'dom.legacyNote' : IS_CLOUD ? 'dom.registryNote.cloud' : 'dom.registryNote')}
+      {truncated ? ` · ${t('dom.truncated')}` : ''}
+    </Note>
+  )
+
+  /* ── 第一层：域名卡片 ── */
+  let layer
+  if (!layer2) {
+    if (state === 'loading') {
+      layer = <EnvelopeSkeleton rows={4} label={t('common.loading')} className="mh-skel--page" />
+    } else if (state === 'error' && rows.length === 0) {
+      layer = (
+        <section className="mh-card">
+          <EmptyState
+            pose="search"
+            tone="danger"
+            icon={AlertTriangle}
+            title={t('dm.errorTitle')}
+            desc={t('dm.errorDesc')}
+            action={
+              <button type="button" className="mh-btn mh-btn--ghost" onClick={load}>
+                <RotateCcw size={14} aria-hidden />
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </section>
+      )
+    } else if (rows.length === 0 && domainList.length === 0) {
+      layer = (
+        <section className="mh-card">
+          <EmptyState
+            pose="wait"
+            title={t('dm.emptyTitle')}
+            desc={t('dom.empty')}
+            action={
+              <button type="button" className="mh-btn mh-btn--primary" onClick={() => setCreateOpen(true)}>
+                <MailPlus size={15} aria-hidden />
+                {t('dom.add.create')}
+              </button>
+            }
+          />
+        </section>
+      )
+    } else {
+      layer = (
+        <section className="mh-dcards-wrap" aria-labelledby="mh-dc-title">
+          <h2 id="mh-dc-title" className="sr-only">
+            {t('dm.cards.title')}
+          </h2>
+          <ul className={`mh-dcards ${state === 'refreshing' ? 'is-busy' : ''}`}>
+            {cards.map((c, i) => (
+              <li key={c.domain} style={{ '--i': i }}>
+                <Link
+                  to={hrefFor(c.domain)}
+                  className={`mh-dcard ${c.domain === ALL ? 'is-all' : ''} ${c.count === 0 ? 'is-empty' : ''}`}
+                  onMouseMove={tiltSpot}
+                  onMouseLeave={tiltReset}
+                >
+                  <span className="mh-dcard__head">
+                    {c.domain === ALL ? <Layers size={15} aria-hidden /> : <Globe size={15} aria-hidden />}
+                    <span className="mh-dcard__name">{c.domain === ALL ? t('dm.cards.all') : c.domain}</span>
+                    <ArrowRight size={15} className="mh-dcard__go" aria-hidden />
+                  </span>
+                  <span className="mh-dcard__count">
+                    <Count value={c.count} />
+                    <span className="mh-dcard__unit">{t('dm.cards.unit')}</span>
+                  </span>
+                  <span className="mh-dcard__meta">
+                    <span title={fmtDateTime(c.last) || ''}>
+                      <Clock size={12} aria-hidden />
+                      {c.last ? t('dm.cards.last', { rel: fmtRelative(c.last, locale, now) }) : t('dm.cards.noMail')}
+                    </span>
+                    {c.withCode > 0 && (
+                      <span>
+                        <KeyRound size={12} aria-hidden />
+                        {t('dm.cards.withCode', { n: c.withCode })}
+                      </span>
+                    )}
+                  </span>
+                  {c.count === 0 && group && <span className="mh-dcard__hint">{t('dm.cards.noneInGroup')}</span>}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {registryNote}
+        </section>
+      )
+    }
+  } else {
+    /* ── 第二层：信箱列表 ── */
+    const title = q && !d ? t('dm.list.searchTitle') : d === ALL || !d ? t('dm.cards.all') : d
+    let body
+    if (state === 'loading') body = <EnvelopeSkeleton rows={6} label={t('common.loading')} />
+    else if (state === 'error' && rows.length === 0)
+      body = (
+        <EmptyState
+          pose="search"
+          tone="danger"
+          icon={AlertTriangle}
+          title={t('dm.errorTitle')}
+          desc={t('dm.errorDesc')}
+          action={
+            <button type="button" className="mh-btn mh-btn--ghost" onClick={load}>
+              <RotateCcw size={14} aria-hidden />
+              {t('common.retry')}
+            </button>
+          }
+        />
+      )
+    else if (visible.length === 0)
+      body =
+        byDomain.length > 0 || q ? (
+          <EmptyState
+            pose="search"
+            title={t('dom.empty.filtered')}
+            desc={t('dm.list.emptyFilteredDesc')}
+            action={
+              <button type="button" className="mh-btn mh-btn--ghost" onClick={() => setParam({ q: '', group: '' })}>
+                <RotateCcw size={14} aria-hidden />
+                {t('ov.filter.resetAll')}
+              </button>
+            }
+          />
+        ) : (
+          <EmptyState
+            pose="wait"
+            title={t('dm.list.emptyTitle')}
+            desc={t('dom.empty')}
+            action={
+              <button type="button" className="mh-btn mh-btn--primary" onClick={() => setCreateOpen(true)}>
+                <MailPlus size={15} aria-hidden />
+                {t('dom.add.create')}
+              </button>
+            }
+          />
+        )
+    else
+      body = (
+        <VirtualList
+          items={visible}
+          getKey={(r) => r.email}
+          estimateSize={wide ? 60 : 136}
+          renderItem={renderItem}
+          className={state === 'refreshing' ? 'is-busy' : ''}
+          label={t('dm.list.label', { name: title })}
+          onMouseMove={spot}
+        />
+      )
+
+    layer = (
+      <section className="mh-card mh-atable mh-mtable" aria-labelledby="mh-mt-title">
+        <header className="mh-atable__head">
+          <div className="mh-crumbs">
+            <button type="button" className="mh-linkbtn mh-crumbs__back" onClick={backToCards}>
+              <ArrowLeft size={14} aria-hidden />
+              {t('dm.list.back')}
+            </button>
+            <h2 id="mh-mt-title" className={`mh-h2 ${d && d !== ALL ? 'is-mono' : ''}`}>
+              {title}
+            </h2>
+          </div>
+          {state !== 'loading' && <p className="mh-atable__count">{tn('dom.count', visible.length)}</p>}
+        </header>
+        {state === 'error' && rows.length > 0 && (
+          <p className="mh-timeline__warn" role="status">
+            <AlertTriangle size={14} aria-hidden />
+            {t('dm.refreshFailed')}
+            <button type="button" className="mh-linkbtn" onClick={load}>
+              {t('common.retry')}
+            </button>
+          </p>
+        )}
+        {visible.length > 0 && state !== 'loading' && (
+          <div className="mh-mcols" aria-hidden>
+            <span>{t('dom.col.email')}</span>
+            <span>{t('meta.group')}</span>
+            <span>{t('dom.col.lastMail')}</span>
+            <span>{t('dom.col.lastCode')}</span>
+            <span className="mh-acols__end">{t('table.actions')}</span>
+          </div>
+        )}
+        {body}
+        <footer className="mh-atable__foot">{registryNote}</footer>
+      </section>
     )
   }
 
-  // 云端「收信自动建」的行多一个「登记」按钮。table-fixed 下列宽不随内容变，
-  // 按钮组会向左溢出盖住「最近验证码」列 —— 有这种行时按中/英文按钮组实宽（含加载转圈）加宽操作列。
-  const showRegister = IS_CLOUD && rows.some((r) => r.status === 'auto')
-  const actionsColW = showRegister ? (locale === 'en' ? 'w-[368px]' : 'w-[280px]') : 'w-[176px]'
-
   return (
-    <div className="flex flex-col gap-5">
+    <div className="mh-page">
       <PageHeader
         title={t('dom.title')}
         subtitle={t('dom.subtitle')}
         actions={
-          <Button type="button" variant="solid" size="md" onClick={() => setComposeOpen(true)}>
-            <MailPlus size={15} aria-hidden />
-            {t('compose.open')}
-          </Button>
+          <>
+            <button type="button" className="mh-btn mh-btn--quiet" onClick={() => setComposeOpen(true)}>
+              <Send size={15} aria-hidden />
+              {t('compose.open')}
+            </button>
+            <button type="button" className="mh-btn mh-btn--primary" onClick={() => setCreateOpen(true)}>
+              <MailPlus size={15} aria-hidden />
+              {t('dom.add.create')}
+            </button>
+          </>
         }
       />
 
-      <UpstreamBar
-        upstreams={upstreams}
-        state={upState}
-        onRetry={reloadUp}
-        workerDiscovery={workerDiscovery}
-      />
+      {statusBar}
 
       {!domains.cfmail_configured && (
-        <Card className="flex items-start gap-2.5 border-warning/30 bg-warning/5 px-4 py-3">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" aria-hidden />
-          <p className="text-sm text-muted">{t('dom.unconfigured')}</p>
-        </Card>
+        <p className="mh-banner mh-banner--warn">
+          <AlertTriangle size={15} aria-hidden />
+          <span>{t('dom.unconfigured')}</span>
+        </p>
       )}
 
-      <AddMailbox domains={domains} onDone={load} t={t} />
-
-      <form onSubmit={onSearch} className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Search
-            size={15}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-subtle"
-            aria-hidden
-          />
-          <input
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder={t('dom.search.placeholder')}
-            aria-label={t('overview.search')}
-            className="h-10 w-full rounded border border-border bg-surface-2/60 pl-9 pr-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40"
-          />
+      <section className="mh-card mh-tool" aria-label={t('dm.tools')}>
+        <SearchCommand
+          compact
+          value={q}
+          onSearch={(v) => setParam({ q: v })}
+          placeholder={t('dm.search.placeholder')}
+          label={t('overview.search')}
+          resultHint={layer2 && state === 'ready' ? tn('dom.count', visible.length) : undefined}
+        />
+        <div className="mh-tool__row">
+          <GroupSelect groups={groupOpts} value={group} onChange={(g) => setParam({ group: g })} />
+          {(q || group) && (
+            <button type="button" className="mh-linkbtn" onClick={() => setParam({ q: '', group: '' })}>
+              <RotateCcw size={13} aria-hidden />
+              {t('ov.filter.reset')}
+            </button>
+          )}
+          {!layer2 && state === 'ready' && (
+            <span className="mh-tool__hint">{tn('dom.count', cards[0]?.count || 0)}</span>
+          )}
         </div>
-        <Button type="submit" variant="solid" size="md">
-          {t('overview.search')}
-        </Button>
-      </form>
+      </section>
 
-      <p
-        className={`inline-flex items-start gap-1.5 text-xs ${
-          workerDiscovery === false ? 'text-warning' : 'text-subtle'
-        }`}
-      >
-        {workerDiscovery === false ? (
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" aria-hidden />
-        ) : (
-          <Info size={13} className="mt-0.5 shrink-0" aria-hidden />
-        )}
-        {t(workerDiscovery === false ? 'dom.legacyNote' : 'dom.registryNote')}
-        {listState === 'ready' && rows.length > 0 && (
-          <span className="text-subtle">
-            · {t('dom.count', { n: rows.length })}
-            {truncated ? ` · ${t('dom.truncated')}` : ''}
-          </span>
-        )}
-      </p>
-
-      <Card className="overflow-hidden">
-        {listState !== 'ready' ? (
-          <StateBlock state={listState} onRetry={load} />
-        ) : rows.length === 0 ? (
-          <StateBlock state="empty" message={t('dom.empty')} />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full table-fixed text-sm">
-              <thead>
-                <tr className="border-b border-border/60 text-left text-xs font-medium text-subtle">
-                  <th className="w-[240px] px-4 py-2.5 align-middle">{t('dom.col.email')}</th>
-                  <th className="px-2 py-2.5 align-middle">{t('dom.col.label')}</th>
-                  <th className="w-[110px] px-2 py-2.5 align-middle">{t('dom.col.lastMail')}</th>
-                  <th className="w-[132px] px-2 py-2.5 align-middle">{t('dom.col.lastCode')}</th>
-                  <th className={`${actionsColW} px-4 py-2.5 text-right align-middle`}>
-                    {t('table.actions') !== 'table.actions' ? t('table.actions') : ''}
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40">
-                {rows.map((r) => {
-                  const fresh = rowCode[r.email]
-                  const code = fresh?.found ? fresh.code : r.last_code
-                  return (
-                    <tr
-                      key={r.email}
-                      tabIndex={0}
-                      aria-label={t('dom.edit.rowLabel', { email: r.email })}
-                      onClick={() => setEditingMailbox(r)}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          setEditingMailbox(r)
-                        }
-                      }}
-                      className="cursor-pointer align-middle hover:bg-surface-2/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
-                    >
-                      <td className="px-4 py-2.5 align-middle" title={r.email}>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              copy(r.email, { successMsg: t('dom.email.copied') })
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
-                            aria-label={t('dom.email.copy', { email: r.email })}
-                            title={t('dom.email.copy', { email: r.email })}
-                            className="group inline-flex min-w-0 max-w-full cursor-pointer items-start gap-1.5 rounded px-1 py-1 text-left font-mono text-xs text-text transition-colors duration-fast hover:bg-surface-2 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                          >
-                            <span className="min-w-0 break-all whitespace-normal leading-relaxed">{r.email}</span>
-                            <Copy size={13} className="mt-0.5 shrink-0 text-subtle group-hover:text-accent" aria-hidden />
-                          </button>
-                          {r.status === 'discovered' && (
-                            <Badge tone="info" className="shrink-0 px-1.5 py-0 text-[10px]">
-                              {t('dom.status.discovered')}
-                            </Badge>
-                          )}
-                          {r.status === 'auto' && (
-                            <Badge tone="accent" className="shrink-0 px-1.5 py-0 text-[10px]">
-                              {t('dom.status.auto')}
-                            </Badge>
-                          )}
-                          {r.status === 'local-only' && (
-                            <Badge tone="warning" className="shrink-0 px-1.5 py-0 text-[10px]">
-                              {t('dom.status.localOnly')}
-                            </Badge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="truncate px-2 py-2.5 align-middle text-xs text-muted">
-                        <div className="flex items-center gap-1.5">
-                          {r.group && (
-                            <Badge tone="subtle" className="shrink-0">
-                              {r.group}
-                            </Badge>
-                          )}
-                          <span className="truncate" title={r.label || ''}>
-                            {r.label || <span className="text-subtle">—</span>}
-                          </span>
-                        </div>
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-2 py-2.5 align-middle tabular-nums text-xs text-subtle"
-                        title={fmtDateTime(r.last_mail_at)}
-                      >
-                        {r.last_mail_at ? fmtRelative(r.last_mail_at, locale) : '—'}
-                      </td>
-                      <td className="px-2 py-2.5 align-middle">
-                        <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-                          {code ? <CopyCode code={code} size="sm" /> : <span className="text-subtle">—</span>}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 align-middle">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {IS_CLOUD && r.status === 'auto' && (
-                            <Button size="sm" variant="ghost" loading={rowBusy[r.email] === 'register'}
-                              onClick={(event) => { event.stopPropagation(); onRegister(r) }}>
-                              <MailPlus size={13} />{t('dom.register')}
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="solid"
-                            loading={rowBusy[r.email] === 'code'}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onGetCode(r)
-                            }}
-                          >
-                            <KeyRound size={13} />
-                            {t('dom.getCode')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              navigate(`/inbox?q=${encodeURIComponent(r.email)}&source=domain`)
-                            }}
-                          >
-                            {t('dom.viewMails')}
-                          </Button>
-                          {/* 低频操作，保持文字级权重，不与高频的「接码」争视觉 */}
-                          <button
-                            type="button"
-                            title={t('dom.remove')}
-                            aria-label={`${t('dom.remove')} ${r.email}`}
-                            disabled={rowBusy[r.email] === 'remove'}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onRemove(r)
-                            }}
-                            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded text-subtle transition-colors duration-fast hover:bg-surface-2 hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <Trash2 size={13} aria-hidden />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      {layer}
 
       <ComposeMailDialog open={composeOpen} onClose={() => setComposeOpen(false)} />
-      <MailboxMetaDialog
-        mailbox={editingMailbox}
-        onClose={() => setEditingMailbox(null)}
-        onSaved={onMetaSaved}
+      <MailboxMetaDialog mailbox={editing} onClose={() => setEditing(null)} onSaved={onMetaSaved} />
+      <CreateMailboxDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        domains={domainList}
+        defaultDomain={d && d !== ALL ? d : ''}
+        configured={domains.cfmail_configured}
+        onCreated={load}
       />
     </div>
   )
 }
 
-/* ── 新建信箱 ──────────────────────────────────────────────── */
-function AddMailbox({ domains, onDone, t }) {
-  const toast = useToast()
-  const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState({ name: '', domain: '', label: '', group: '' })
-
-  const domainList = domains.domains || []
-  useEffect(() => {
-    if (!form.domain && domainList.length) setForm((f) => ({ ...f, domain: domainList[0] }))
-  }, [domainList, form.domain])
-
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
-
-  const submit = async (e) => {
-    e.preventDefault()
-    setBusy(true)
-    try {
-      if (!form.name.trim()) return
-      await hubApi.createMailbox({
-        name: form.name.trim(),
-        domain: form.domain,
-        label: form.label || undefined,
-        group: form.group || undefined,
-      })
-      toast.success(t('dom.created'))
-      setForm((f) => ({ ...f, name: '', label: '', group: '' }))
-      onDone()
-    } catch (err) {
-      toast.error(err?.userMessage || t('common.error'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const inputCls =
-    'h-10 w-full rounded border border-border bg-surface-2/60 px-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40'
-
-  return (
-    <Card className="flex flex-col gap-3.5 px-4 py-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="mr-1 font-heading text-sm font-semibold text-text">{t('dom.add.title')}</h2>
-      </div>
-
-      <form onSubmit={submit} className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_1fr_auto]">
-        <>
-          <input
-            value={form.name}
-            onChange={set('name')}
-            placeholder={t('dom.add.localPart')}
-            aria-label={t('dom.add.localPart')}
-            autoComplete="off"
-            spellCheck={false}
-            className={`${inputCls} font-mono`}
-          />
-          <select
-            value={form.domain}
-            onChange={set('domain')}
-            aria-label={t('dom.add.domain')}
-            className={`${inputCls} cursor-pointer`}
-          >
-            {domainList.map((d) => (
-              <option key={d} value={d}>
-                @{d}
-              </option>
-            ))}
-          </select>
-        </>
-
-        <input
-          value={form.label}
-          onChange={set('label')}
-          placeholder={t('dom.add.label')}
-          aria-label={t('dom.add.label')}
-          className={inputCls}
-        />
-        <input
-          value={form.group}
-          onChange={set('group')}
-          placeholder={t('dom.add.group')}
-          aria-label={t('dom.add.group')}
-          className={inputCls}
-        />
-        <Button
-          type="submit"
-          variant="primary"
-          size="md"
-          loading={busy}
-          disabled={!domains.cfmail_configured}
-        >
-          <Plus size={15} />
-          {t('dom.add.submitCreate')}
-        </Button>
-      </form>
-    </Card>
-  )
+const STATUS_PILL = {
+  discovered: ['info', 'dom.status.discovered'],
+  auto: ['ok', 'dom.status.auto'],
+  'local-only': ['warn', 'dom.status.localOnly'],
 }
+
+/* 单行：memo 包裹。整行可点 = 编辑备注 / 分组（与改版前一致）；地址、验证码、操作按钮叠在上面各管各的。 */
+const MailboxRow = memo(function MailboxRow({ r, busy, fresh, q, now, locale, t, act }) {
+  const code = fresh?.found ? fresh.code : r.last_code
+  const pill = STATUS_PILL[r.status]
+  return (
+    <div
+      className="mh-mrow"
+      onClick={(e) => {
+        e.currentTarget.querySelector('.mh-arow__open')?.focus({ preventScroll: true })
+        act.edit(r)
+      }}
+    >
+      <button
+        type="button"
+        className="mh-arow__open"
+        onClick={(e) => {
+          e.stopPropagation()
+          act.edit(r)
+        }}
+        aria-haspopup="dialog"
+        aria-label={t('dom.edit.rowLabel', { email: r.email })}
+      />
+      <div className="mh-mrow__email">
+        <span className="mh-mrow__addr">
+          <CopyAddr email={r.email} q={q} />
+          {pill && <StatusPill tone={pill[0]}>{t(pill[1])}</StatusPill>}
+        </span>
+        {r.label && (
+          <span className="mh-arow__note" title={r.label}>
+            <span>{r.label}</span>
+          </span>
+        )}
+      </div>
+      <div className="mh-arow__group">
+        {r.group ? (
+          <span className="mh-chip" title={r.group}>
+            {r.group}
+          </span>
+        ) : (
+          <span className="mh-dash" aria-hidden>
+            —
+          </span>
+        )}
+      </div>
+      <time className="mh-arow__time" dateTime={r.last_mail_at || undefined} title={fmtDateTime(r.last_mail_at) || ''}>
+        <Clock size={12} className="mh-arow__time-icon" aria-hidden />
+        {r.last_mail_at ? fmtRelative(r.last_mail_at, locale, now) : t('common.none')}
+      </time>
+      <div className="mh-arow__foot">
+        <div className="mh-arow__code">
+          <CodeCell code={code} query={q} />
+        </div>
+        <div className="mh-arow__acts">
+          {IS_CLOUD && r.status === 'auto' && (
+            <ActBtn icon={MailPlus} label={t('dom.register')} busy={busy === 'register'} onClick={() => act.register(r)} />
+          )}
+          <ActBtn icon={KeyRound} label={t('dom.getCode')} showLabel tone="accent" busy={busy === 'code'} onClick={() => act.code(r)} />
+          <ActBtn icon={Inbox} label={t('dom.viewMails')} onClick={() => act.mails(r)} />
+          <ActBtn icon={Pencil} label={t('dom.edit.title')} onClick={() => act.edit(r)} aria-haspopup="dialog" />
+          {/* 低频操作：只有本地版有「邮箱簿」可移出；云端版没有这个按钮 */}
+          {hubApi.supportsLocalRegistry && (
+            <ActBtn icon={Trash2} label={`${t('dom.remove')} ${r.email}`} tone="danger" busy={busy === 'remove'} onClick={() => act.remove(r)} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})

@@ -125,3 +125,19 @@ test("本地：跨站网页提交的写请求被拒绝（CSRF），同源页面�
   assert.equal((await post({})).status, 200, "curl 等不带 Origin 的客户端放行");
   assert.equal(seen.length, 2);
 }));
+
+// 邮件正文 iframe 为了「适应宽度」开了 allow-same-origin。Safari / Firefox 不支持 credentialless，
+// 恶意邮件里指向本站接口的 <img> 在点「显示图片」后会带登录 Cookie，读不到数据，但会消耗 D1 读取额度。
+// 浏览器用 Sec-Fetch-Dest 标明请求用途：数据接口只接受 fetch / XHR（empty）和不带该头的命令行客户端。
+test("数据接口拒绝以图片、页面等名义发来的浏览器请求，不打上游", withUpstream(async (seen) => {
+  const env = { ...CFMAIL, LOCAL_NO_LOGIN: "1" };
+  for (const dest of ["image", "document", "iframe", "script", "style"]) {
+    const res = await call("http://127.0.0.1:8787/admin/mailboxes", env, { headers: { "Sec-Fetch-Dest": dest } });
+    assert.equal(res.status, 403, dest);
+  }
+  assert.equal(seen.length, 0, "被拒绝的请求不能转发给 mail-api");
+  const ok = await call("http://127.0.0.1:8787/admin/mailboxes", env, { headers: { "Sec-Fetch-Dest": "empty" } });
+  assert.equal(ok.status, 200);
+  const cli = await call("http://127.0.0.1:8787/admin/mailboxes", env);
+  assert.equal(cli.status, 200);
+}));

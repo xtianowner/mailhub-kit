@@ -14,6 +14,7 @@
 | `scripts/set-login.mjs` | 用户本人在终端里设置登录名和密码（不回显、输两次） |
 | `scripts/verify.mjs` | 线上 + 本地验收（含收信模式与未授权拒绝），并打印交付信息 |
 | `scripts/doctor.mjs` | 只读环境自检 |
+| `scripts/node.sh` / `scripts/node.ps1` | 启动器：用 `configs` 记录在 `.mailhub/runtime.json` 的 Node 运行脚本（`start.sh` / `stop.sh` 用前者，`*.cmd` 用后者），不受用户 PATH 里旧版 Node 影响 |
 | `scripts/lib/` | `common` 路径、子进程、退出码；`config` 配置校验与 wrangler 配置生成；`cf` Cloudflare 只读查询；`build` 依赖与前端构建 |
 | `schema/0000_base.sql` | D1 基础表（增量迁移在 `modules/cfmail-worker/migrations/`） |
 | `docs/data-api.md` | 数据接口说明（二次开发用） |

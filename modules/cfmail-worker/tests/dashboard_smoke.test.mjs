@@ -19,12 +19,12 @@ const RAW_MAIL = [
   "",
 ].join("\r\n");
 
-function makeMessage(to) {
+function makeMessage(to, raw = RAW_MAIL) {
   return {
     from: "noreply@tm.openai.com",
     to,
     headers: new Map([["subject", "Your verification code"]]),
-    raw: new TextEncoder().encode(RAW_MAIL).buffer,
+    raw: new TextEncoder().encode(raw).buffer,
   };
 }
 
@@ -107,6 +107,13 @@ test("验证码照常提取（自动建信箱没破坏原有能力）", async ()
   await runHandler(worker, makeMessage("code@example.com"), env);
   assert.equal(env.messages[0].code, "123456");
   assert.equal(env.messages[0].link, "https://example.com/verify");
+});
+
+test("直贴版入库的验证码保持原始大小写（改了 src 必须重跑 build:dashboard）", async () => {
+  const worker = (await import(DASHBOARD)).default;
+  const env = makeEnv();
+  await runHandler(worker, makeMessage("case@example.com", RAW_MAIL.replace("Your code is 123456.", "Your verification code is aB3dE9.")), env);
+  assert.equal(env.messages[0].code, "aB3dE9");
 });
 
 test("已存在的信箱复用，不重复建", async () => {

@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCw, ExternalLink, Mail, MailWarning } from 'lucide-react'
+import { Link, useParams } from 'react-router-dom'
+import { AlertTriangle, ArrowLeft, Mailbox, RotateCw } from 'lucide-react'
 import { api } from '../lib/api.js'
 import { fmtDateTime } from '../lib/format.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
-import { Button, Badge, Card, CopyCode } from '../components/ui.jsx'
-import { StateBlock } from '../components/StateBlock.jsx'
+import { MailDetailView } from '../components/overview/MailDetail.jsx'
+import { MailBody } from '../components/MailBody.jsx'
+import { StatusPill } from '../components/work.jsx'
 
+// Hotmail 账号下的单封邮件（/hotmail/accounts/:id/messages/:mid，旧链接保留）。
+// 呈现与统一邮件详情一致（同一个 MailDetailView）；数据仍来自 hotmail-graph 的缓存，
+// 正文只有纯文本缓存，交给 MailBody 的纯文本视图（React 文本节点，不解析 HTML）。保留「重新提取」。
 export default function MessagePage() {
   const { id, mid } = useParams()
-  const navigate = useNavigate()
   const { t } = useLocale()
   const toast = useToast()
 
@@ -38,7 +41,7 @@ export default function MessagePage() {
     setReBusy(true)
     try {
       setMsg(await api.reextract(id, mid))
-      toast.success(t('msg.reextract') + ' ✓')
+      toast.success(`${t('msg.reextract')} ✓`)
     } catch {
       toast.error(t('common.error'))
     } finally {
@@ -46,150 +49,51 @@ export default function MessagePage() {
     }
   }
 
-  const back = (
-    <Link
-      to={`/hotmail/accounts/${id}`}
-      className="inline-flex w-fit items-center gap-1.5 text-sm text-muted transition-colors hover:text-text"
-    >
-      <ArrowLeft size={15} /> {t('msg.back')}
-    </Link>
-  )
-
-  if (state === 'loading') return <StateBlock state="loading" />
-  if (state === 'notfound')
-    return (
-      <div className="flex flex-col gap-4">
-        {back}
-        <StateBlock state="empty" message={t('msg.notFound')} />
-      </div>
-    )
-  if (state === 'cred')
-    return (
-      <div className="flex flex-col gap-4">
-        {back}
-        <StateBlock state="error" message={t('msg.credInvalid')} />
-      </div>
-    )
-  if (state === 'error' || !msg)
-    return (
-      <div className="flex flex-col gap-4">
-        {back}
-        <StateBlock state="error" onRetry={load} />
-      </div>
-    )
-
-  const isJunk = msg.folder_name === 'junkemail'
+  const m = msg || {}
+  const isJunk = m.folder_name === 'junkemail'
+  const meta = [
+    [t('md.from'), m.from_name && m.from_address ? `${m.from_name} <${m.from_address}>` : m.from_name || m.from_address],
+    [t('md.time'), m.received_at ? fmtDateTime(m.received_at) : null],
+    [t('hm.msg.folder'), msg ? t(isJunk ? 'folder.junk' : 'folder.inbox') : null],
+  ]
+  const errorText = state === 'cred' ? t('msg.credInvalid') : state === 'notfound' ? t('msg.notFound') : t('common.error')
 
   return (
-    <div className="flex flex-col gap-5">
-      {back}
-
-      {/* header */}
-      <Card className="flex flex-col gap-3 p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          {isJunk ? (
-            <Badge tone="warning">
-              <MailWarning size={12} /> {t('folder.junk')}
-            </Badge>
-          ) : (
-            <Badge tone="info">
-              <Mail size={12} /> {t('folder.inbox')}
-            </Badge>
-          )}
-          <h1 className="break-words font-heading text-lg font-semibold text-text">
-            {msg.subject || '(no subject)'}
-          </h1>
-        </div>
-        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
-          <span>
-            {t('msg.from')}:{' '}
-            <span className="text-text">{msg.from_name || msg.from_address || t('common.none')}</span>
-            {msg.from_name && msg.from_address && (
-              <span className="ml-1.5 text-subtle">&lt;{msg.from_address}&gt;</span>
-            )}
-          </span>
-          <span>
-            {t('msg.time')}:{' '}
-            <span className="text-text">
-              {msg.received_at ? fmtDateTime(msg.received_at) : t('common.none')}
-            </span>
-          </span>
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_minmax(260px,320px)]">
-        {/* body */}
-        <Card className="flex flex-col p-0">
-          <div className="border-b border-border/70 px-5 py-3 font-heading text-sm font-semibold text-text">
-            {t('msg.body')}
-          </div>
-          {msg.body_text_cached ? (
-            <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-5 py-4 font-mono text-xs leading-relaxed text-muted">
-              {msg.body_text_cached}
-            </pre>
-          ) : (
-            <div className="px-5 py-8 text-sm text-subtle">{t('msg.body.empty')}</div>
-          )}
-        </Card>
-
-        {/* extract */}
-        <Card className="flex h-fit flex-col gap-4 p-5">
-          <div className="flex items-center justify-between">
-            <span className="font-heading text-sm font-semibold text-text">{t('msg.extract')}</span>
-            <Button size="sm" variant="subtle" loading={reBusy} onClick={onReextract}>
-              {!reBusy && <RotateCw size={13} />}
+    <div className="mh-page mh-msgpage">
+      <div className="mh-msgbar">
+        <Link to={`/hotmail/accounts/${id}`} className="mh-btn mh-btn--quiet mh-btn--sm">
+          <ArrowLeft size={15} aria-hidden />
+          {t('msg.back')}
+        </Link>
+        <span className="mh-msgbar__end">
+          <StatusPill tone={isJunk ? 'warn' : 'info'} dot={false}>
+            {isJunk ? <AlertTriangle size={11} aria-hidden /> : <Mailbox size={11} aria-hidden />}
+            {t(isJunk ? 'folder.junk' : 'src.hotmail')}
+          </StatusPill>
+          {state === 'ready' && (
+            <button type="button" className="mh-btn mh-btn--ghost mh-btn--sm" onClick={onReextract} disabled={reBusy}>
+              <RotateCw size={14} className={reBusy ? 'mh-spin' : ''} aria-hidden />
               {t('msg.reextract')}
-            </Button>
-          </div>
-
-          {/* code */}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-subtle">{t('msg.extract.code')}</span>
-            {msg.verification_code ? (
-              <CopyCode code={msg.verification_code} size="lg" className="self-start" />
-            ) : (
-              <span className="text-sm text-subtle">{t('common.none')}</span>
-            )}
-          </div>
-
-          {/* links */}
-          {msg.links?.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-subtle">{t('msg.extract.links')}</span>
-              {msg.links.map((l, i) => (
-                <a
-                  key={i}
-                  href={l}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 truncate text-sm text-accent hover:underline"
-                >
-                  <ExternalLink size={13} className="shrink-0" />
-                  <span className="truncate">{l}</span>
-                </a>
-              ))}
-            </div>
+            </button>
           )}
-
-          {/* tags */}
-          {msg.tags?.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-subtle">{t('msg.extract.tags')}</span>
-              <div className="flex flex-wrap gap-1.5">
-                {msg.tags.map((tag, i) => (
-                  <Badge key={i} tone="subtle">
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {!msg.verification_code && !msg.links?.length && !msg.tags?.length && (
-            <span className="text-sm text-subtle">{t('msg.extract.none')}</span>
-          )}
-        </Card>
+        </span>
       </div>
+
+      <article className="mh-card mh-msgcard">
+        <MailDetailView
+          m={{ subject: m.subject, code: m.verification_code }}
+          state={state === 'ready' ? 'ready' : state === 'loading' ? 'loading' : 'error'}
+          full={msg ? { links: msg.links || [] } : null}
+          meta={meta}
+          tags={msg?.tags}
+          onRetry={state === 'error' ? load : undefined}
+          errorText={errorText}
+          subjectAs="h1"
+          pendingSubject
+          maxLinks={Infinity}
+          body={<MailBody messageKey={`${id}:${mid}`} text={msg?.body_text_cached || ''} />}
+        />
+      </article>
     </div>
   )
 }

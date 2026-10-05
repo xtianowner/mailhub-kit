@@ -12,7 +12,7 @@ def strip_exports(code: str) -> str:
 
 
 def load_verifier() -> str:
-    return strip_exports((SRC_DIR / "verification_extractor.mjs").read_text())
+    return strip_exports((SRC_DIR / "verification_extractor.mjs").read_text(encoding="utf-8"))
 
 
 def load_mailbox_registry() -> str:
@@ -21,11 +21,11 @@ def load_mailbox_registry() -> str:
     直贴版不能 import 本地模块，但这段「自动建信箱」的逻辑必须与
     src/mail-inbox.js 用的是**同一份源码**，否则两边迟早漂移成两种收信行为。
     """
-    return strip_exports((SRC_DIR / "mailbox_registry.mjs").read_text())
+    return strip_exports((SRC_DIR / "mailbox_registry.mjs").read_text(encoding="utf-8"))
 
 
 def load_raw_parser() -> str:
-    code = (SRC_DIR / "raw_mail_parser.mjs").read_text()
+    code = (SRC_DIR / "raw_mail_parser.mjs").read_text(encoding="utf-8")
     lines = code.splitlines()
     if lines and "verification_extractor.mjs" in lines[0]:
         code = "\n".join(lines[1:]) + ("\n" if code.endswith("\n") else "")
@@ -33,11 +33,11 @@ def load_raw_parser() -> str:
 
 
 def load_mail_attachments() -> str:
-    return strip_exports((SRC_DIR / "mail_attachments.mjs").read_text())
+    return strip_exports((SRC_DIR / "mail_attachments.mjs").read_text(encoding="utf-8"))
 
 
 def load_mail_send() -> str:
-    return strip_exports((SRC_DIR / "mail_send.mjs").read_text())
+    return strip_exports((SRC_DIR / "mail_send.mjs").read_text(encoding="utf-8"))
 
 
 def build_mail_inbox_dashboard() -> str:
@@ -173,13 +173,13 @@ export default {
         template.replace("__VERIFIER__", verifier)
         .replace("__RAW_PARSER__", raw_parser)
         .replace("__MAILBOX_REGISTRY__", load_mailbox_registry())
-        .replace("__MAIL_SECURITY__", strip_exports((SRC_DIR / "mail_security.mjs").read_text()))
+        .replace("__MAIL_SECURITY__", strip_exports((SRC_DIR / "mail_security.mjs").read_text(encoding="utf-8")))
     )
 
 
 def build_mail_api_dashboard() -> str:
     verifier = load_verifier()
-    src = (SRC_DIR / "mail-api.js").read_text()
+    src = (SRC_DIR / "mail-api.js").read_text(encoding="utf-8")
     src = src.replace('import { htmlToText, normalizeText } from "./verification_extractor.mjs";\n', "")
     src = src.replace('import { loadInlineImages } from "./mail_attachments.mjs";\n', "")
     src = src.replace('import { getSendingStatus, sendDomainMail, SendMailError } from "./mail_send.mjs";\n', "")
@@ -194,7 +194,7 @@ def build_mail_api_dashboard() -> str:
         + "\n\n"
         + load_mail_send()
         + "\n\n"
-        + strip_exports((SRC_DIR / "mail_security.mjs").read_text())
+        + strip_exports((SRC_DIR / "mail_security.mjs").read_text(encoding="utf-8"))
         + "\n\n"
         + src
     )
@@ -202,8 +202,8 @@ def build_mail_api_dashboard() -> str:
 
 def main() -> None:
     DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
-    (DEPLOY_DIR / "mail-inbox-dashboard.js").write_text(build_mail_inbox_dashboard())
-    (DEPLOY_DIR / "mail-api-dashboard.js").write_text(build_mail_api_dashboard())
+    (DEPLOY_DIR / "mail-inbox-dashboard.js").write_text(build_mail_inbox_dashboard(), encoding="utf-8")
+    (DEPLOY_DIR / "mail-api-dashboard.js").write_text(build_mail_api_dashboard(), encoding="utf-8")
     print("updated deploy/cloudflare-dashboard/mail-inbox-dashboard.js")
     print("updated deploy/cloudflare-dashboard/mail-api-dashboard.js")
 
