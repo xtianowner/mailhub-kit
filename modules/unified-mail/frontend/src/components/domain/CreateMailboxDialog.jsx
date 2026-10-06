@@ -7,7 +7,8 @@ import { Modal } from '../Modal.jsx'
 
 /* 新建信箱（弹窗）。调用与改版前完全相同：hubApi.createMailbox({ name, domain, label, group })。
    填了一半被误关也不丢：内容节流写进 sessionStorage 草稿（只有用户名 / 域名 / 备注 / 分组，没有凭据），
-   重开时恢复并提示，可一键清空；创建成功或确认放弃后删除草稿。 */
+   重开时恢复并提示，可一键清空；创建成功或确认放弃后删除草稿。
+   创建成功后 onCreated(新信箱地址) —— 域名邮箱页据此直接打开这个信箱的等码面板。 */
 const DRAFT_KEY = 'mailhub:draft:new-mailbox'
 const EMPTY = { name: '', domain: '', label: '', group: '' }
 
@@ -96,7 +97,7 @@ export function CreateMailboxDialog({ open, onClose, domains = [], defaultDomain
     setBusy(true)
     setError('')
     try {
-      await hubApi.createMailbox({
+      const created = await hubApi.createMailbox({
         name: form.name.trim(),
         domain: form.domain,
         label: form.label || undefined,
@@ -105,7 +106,8 @@ export function CreateMailboxDialog({ open, onClose, domains = [], defaultDomain
       toast.success(t('dom.created'))
       clearTimeout(saveTimer.current)
       clearDraft()
-      onCreated?.()
+      // 以接口回的地址为准（服务端可能规范化大小写等）；万一没回，按填的拼
+      onCreated?.(String(created?.email || `${form.name.trim()}@${form.domain}`).toLowerCase())
       onClose()
     } catch (err) {
       setError(err?.userMessage || t('common.error'))

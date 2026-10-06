@@ -31,6 +31,9 @@ import { VirtualList } from '../components/VirtualList.jsx'
 import { SearchCommand } from '../components/overview/SearchCommand.jsx'
 import { Count, StatusLight } from '../components/overview/StatCard.jsx'
 import { CreateMailboxDialog } from '../components/domain/CreateMailboxDialog.jsx'
+import { MailboxWatch } from '../components/domain/MailboxWatch.jsx'
+import { DetailDrawer } from '../components/DetailDrawer.jsx'
+import { useConfirm } from '../components/ConfirmDialog.jsx'
 import { ActBtn, CodeCell, CopyAddr, GroupSelect, Note, StatusPill, rowSpotlight, tiltReset, tiltSpot } from '../components/work.jsx'
 
 const ALL = '*'
@@ -86,6 +89,9 @@ export default function DomainMailPage() {
   const [composeOpen, setComposeOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [confirm, confirmDialog] = useConfirm()
+  const [watching, setWatching] = useState('') // 刚建好的信箱：打开它的等码面板
+  const [justCreated, setJustCreated] = useState('')
 
   const setParam = useCallback((patch) => setParams((prev) => patchParams(prev, patch), { replace: true }), [setParams])
 
@@ -201,7 +207,13 @@ export default function DomainMailPage() {
       }
     },
     remove: async (row) => {
-      if (!window.confirm(`${t('dom.remove.confirm')}\n${row.email}`)) return
+      const ok = await confirm({
+        title: t('dom.remove.title'),
+        object: row.email,
+        description: t('dom.remove.confirm'),
+        confirmLabel: t('dom.remove'),
+      })
+      if (!ok) return
       busyOn(row.email, 'remove')
       try {
         await hubApi.unregisterMailbox(row.email)
@@ -226,6 +238,32 @@ export default function DomainMailPage() {
     }),
     [],
   )
+  // 新建成功：列表照旧刷新一次；等新建弹窗关掉、把焦点还给「新建信箱」按钮之后（两帧），再打开等码面板，
+  // 这样面板关闭时焦点能回到那个按钮上。
+  const onCreated = useCallback(
+    (email) => {
+      load()
+      if (email) setJustCreated(email)
+    },
+    [load],
+  )
+  useEffect(() => {
+    if (createOpen || !justCreated) return undefined
+    let second = 0
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        setWatching(justCreated)
+        setJustCreated('')
+      })
+    })
+    return () => {
+      cancelAnimationFrame(first)
+      cancelAnimationFrame(second)
+    }
+  }, [createOpen, justCreated])
+  // 等码面板拿到码：同步到列表这一行（只改本地状态，不额外请求）
+  const onWatchCode = useCallback((email, res) => setRowCode((m) => ({ ...m, [email]: res })), [])
+
   const onMetaSaved = (next) => setRows((cur) => cur.map((row) => (row.email === next.email ? { ...row, ...next } : row)))
 
   /* ── 导航：进入某个域名推一条历史（浏览器后退回到卡片） ── */
@@ -524,8 +562,12 @@ export default function DomainMailPage() {
         domains={domainList}
         defaultDomain={d && d !== ALL ? d : ''}
         configured={domains.cfmail_configured}
-        onCreated={load}
+        onCreated={onCreated}
       />
+      <DetailDrawer open={Boolean(watching)} onClose={() => setWatching('')} title={t('dm.watch.title')} titleId="mh-watch-title">
+        {watching && <MailboxWatch key={watching} email={watching} onCode={onWatchCode} now={now} />}
+      </DetailDrawer>
+      {confirmDialog}
     </div>
   )
 }

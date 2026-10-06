@@ -54,6 +54,22 @@ test("「code is」后的字母数字混合码，同一行有网址也认得", (
   assert.equal(pick("Newsletter", "This code is valid for everyone. See https://example.com"), null);
 });
 
+// 2026-10-06：Cloudflare 的营销邮件没有验证码，却把页脚地址「San Francisco, CA 94107」里的邮编当成了码。
+test("美国地址里的邮编（州缩写 + 5 位数字）不是验证码", () => {
+  assert.equal(
+    pick("Free Plan purchased for example.com",
+      "Welcome to your free plan. Copyright © 2026 Cloudflare, Inc. 101 Townsend Street, San Francisco, CA 94107 cloudflare.com | Privacy Policy"),
+    null,
+  );
+  assert.equal(pick("Receipt", "Acme Inc, 1 Market St, Seattle, WA 98101-1234. Thanks for your order."), null);
+  // 反例：真码不受影响；地址与码同时出现时取码
+  assert.equal(pick("Your code", "Your code is 94107"), "94107");
+  assert.equal(
+    pick("Sign in", "Your verification code is 482913.\nAcme Inc, 1 Market St, San Francisco, CA 94107"),
+    "482913",
+  );
+});
+
 test("邮箱地址里的 token 仍按忽略大小写排除", () => {
   assert.equal(
     pick("Your code", "Sent to Ab12cd@example.com\nYour verification code is 482913"),

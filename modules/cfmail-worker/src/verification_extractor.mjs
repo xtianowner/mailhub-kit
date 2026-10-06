@@ -158,6 +158,18 @@ function isLikelyDateOrTime(token, line) {
   return false;
 }
 
+// 美国州缩写 + 邮编（94107 / 98101-1234）：营销邮件页脚的公司地址常见，不是验证码。
+const US_STATE = "A[LKZR]|C[AOT]|D[EC]|F[LM]|G[AU]|HI|I[ADLN]|K[SY]|LA|M[ADEHINOPST]|N[CDEHJMVY]|O[HKR]|P[AR]|RI|S[CD]|T[NX]|UT|V[AIT]|W[AIVY]";
+const US_POSTAL_RE = new RegExp(`\\b(?:${US_STATE}),?\\s+(\\d{5})(?:-(\\d{4}))?\\b`, "g");
+
+function isLikelyUsPostalCode(token, text) {
+  if (!/^\d{4,5}$/.test(token)) return false;
+  for (const m of String(text).matchAll(US_POSTAL_RE)) {
+    if (m[1] === token || m[2] === token) return true;
+  }
+  return false;
+}
+
 function isInEmailAddress(token, line) {
   const upperLine = line.toUpperCase();
   if (!upperLine.includes("@")) return false;
@@ -216,6 +228,7 @@ function collectInlineCandidates(source, text) {
       if (/chatgpt|openai/i.test(snippet)) score += 8;
       if (isLikelyDateOrTime(code, snippet)) score -= 140;
       if (isInEmailAddress(code, snippet)) score -= 140;
+      if (isLikelyUsPostalCode(code, normalized)) score -= 140;
 
       candidates.push({
         code,
@@ -260,6 +273,7 @@ function collectLineCandidates(source, text) {
 
       if (isLikelyDateOrTime(code, combinedContext)) score -= 140;
       if (isInEmailAddress(code, combinedContext)) score -= 140;
+      if (isLikelyUsPostalCode(code, line)) score -= 140;
       if (/https?:\/\//i.test(combinedContext)) score -= 18;
 
       candidates.push({

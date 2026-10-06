@@ -9,12 +9,17 @@ import { MailFrame, ZOOM_STEPS } from './MailFrame.jsx'
    邮件 HTML 是**不可信输入**（任何人都能往你信箱里发东西），所以：
 
    1. 一律放进 `<iframe sandbox>` 且**不给 allow-scripts** —— 脚本、表单、
-      弹窗、顶层跳转全部禁掉。绝不用 innerHTML 直接塞。沙箱只放开 allow-same-origin，
+      顶层跳转全部禁掉。绝不用 innerHTML 直接塞。沙箱放开 allow-same-origin，
       让父页读得到排版尺寸（适应宽度 / 高度跟随内容，见 MailFrame.jsx）；没有脚本权限，
       邮件代码在这个文档里跑不起来。
-   2. 默认**屏蔽远程图片**。营销/钓鱼邮件里的 1x1 追踪像素靠远程图片请求
+   2. 链接：沙箱放开 allow-popups（+ escape-sandbox），用户**亲手点**正文里的链接时在新标签页打开；
+      没有脚本，邮件自己弹不出窗口。送进 iframe 之前先把每个链接过一遍（sanitizeLinks）：
+      只留 http / https / mailto 的绝对地址，一律 target=_blank + rel="noopener noreferrer"
+      （新页面拿不到 window.opener、也不带来源页）；javascript:、data:、相对地址等其它写法直接去掉 href，
+      变成点不动的普通文字。
+   3. 默认**屏蔽远程图片**。营销/钓鱼邮件里的 1x1 追踪像素靠远程图片请求
       回报「这封信被谁在什么时候打开了」，默认加载等于自动回执。想看再点。
-   3. iframe 里再挂一道 CSP，把默认拉取全部掐掉，只在用户点了「显示图片」
+   4. iframe 里再挂一道 CSP，把默认拉取全部掐掉，只在用户点了「显示图片」
       后放行 img —— 双保险，不依赖单一机制。
 
    两种视图：原始排版（HTML）/ 纯文本。只有一种时不显示切换。
@@ -96,6 +101,58 @@ function containsRemoteImages(html) {
   return /url\(\s*["']?(?:https?:)?\/\//i.test(html)
 }
 
+/* ── 链接清洗 ──
+   用浏览器自己的 HTML 解析器（DOMParser：只解析、不执行脚本、不加载图片）找出所有链接，
+   再用 URL 解析器判协议 —— 字符实体（&#106;avascript:）、夹在中间的换行 / 制表符、首尾空白这些
+   绕过写法，解析出来的协议和浏览器真正点击时用的一致，不靠正则猜。 */
+const SAFE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+const XLINK_NS = 'http://www.w3.org/1999/xlink'
+const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
+
+function safeHref(raw) {
+  const value = String(raw ?? '').trim()
+  if (!value) return null
+  let url
+  try {
+    // 协议相对写法（//example.com）按 https 理解；其余必须是带协议的绝对地址 ——
+    // 邮件里的相对地址没有可信的基准，在 iframe 里会被解析到 MailHub 自己的网址上
+    url = new URL(value.startsWith('//') ? `https:${value}` : value)
+  } catch {
+    return null
+  }
+  return SAFE_LINK_PROTOCOLS.has(url.protocol) ? url.href : null
+}
+
+function sanitizeLinks(html) {
+  if (!html || typeof DOMParser === 'undefined') return html
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  // SVG 的 <animate>/<set> 不靠脚本也能把链接地址改成 javascript:，改 href 的动画一律去掉
+  for (const anim of [...doc.querySelectorAll('animate, set')]) {
+    const name = String(anim.getAttribute('attributeName') || '').trim().toLowerCase()
+    if (name === 'href' || name === 'xlink:href') anim.remove()
+  }
+  // HTML 的 <a> / <area>，以及 SVG 里的 <a>（href 或 xlink:href）
+  for (const link of doc.querySelectorAll('a, area')) {
+    const raw = link.hasAttribute('href') ? link.getAttribute('href') : link.getAttributeNS(XLINK_NS, 'href')
+    link.removeAttributeNS(XLINK_NS, 'href')
+    const href = safeHref(raw)
+    if (href) {
+      link.setAttribute('href', href)
+      link.setAttribute('target', '_blank')
+      link.setAttribute('rel', 'noopener noreferrer')
+      link.removeAttribute('download')
+    } else {
+      link.removeAttribute('href')
+      link.removeAttribute('target')
+    }
+  }
+  // MathML 元素上的 href（个别浏览器当链接用）同样不留
+  for (const el of doc.querySelectorAll('[href]')) {
+    if (el.namespaceURI === MATHML_NS) el.removeAttribute('href')
+  }
+  return doc.documentElement.outerHTML
+}
+
 function buildSrcDoc(html, { allowRemoteImages, dark, textColor, accentColor }) {
   const csp = allowRemoteImages
     ? "default-src 'none'; img-src http: https: data:; style-src 'unsafe-inline'; font-src data:;"
@@ -157,7 +214,7 @@ export function MailBody({ html, text, inlineImages = [], messageKey, className 
   }
 
   const dark = theme !== 'light'
-  const emailHtml = useMemo(() => replaceCidImages(html || '', inlineImages), [html, inlineImages])
+  const emailHtml = useMemo(() => sanitizeLinks(replaceCidImages(html || '', inlineImages)), [html, inlineImages])
   const hasRemote = useMemo(() => containsRemoteImages(emailHtml), [emailHtml])
 
   const srcDoc = useMemo(

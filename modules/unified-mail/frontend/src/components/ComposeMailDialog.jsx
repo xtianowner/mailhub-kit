@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { AlertCircle, Mail, RefreshCw, Send, X } from 'lucide-react'
+import { AlertCircle, Mail, RefreshCw, Send } from 'lucide-react'
 import { hubApi } from '../lib/hubApi.js'
 import { useLocale } from '../i18n/LocaleProvider.jsx'
 import { useToast } from '../lib/toast.jsx'
+import { Modal } from './Modal.jsx'
 import { Button, Spinner } from './ui.jsx'
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/
-const FOCUSABLE =
-  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
 function normalizedInitial(initialValues = {}) {
   return {
@@ -20,16 +18,14 @@ function normalizedInitial(initialValues = {}) {
   }
 }
 
+/* 写信 / 回复（弹窗）。外壳是共用的 Modal：看得见的 ×、Esc、焦点锁定与归还，
+   以及「不吞数据的出口」—— 填了内容后点遮罩不关、× / Esc / 取消先问「放弃已经填写的内容？」，
+   没填（或改回了打开时的样子）照常直接关。发件地址是自动带出来的选择，不算「填了内容」。 */
 export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compose' }) {
   const { t } = useLocale()
   const toast = useToast()
-  const dialogRef = useRef(null)
-  const closeRef = useRef(null)
-  const restoreFocusRef = useRef(null)
-  const busyRef = useRef(false)
-  const onCloseRef = useRef(onClose)
+  const formRef = useRef(null)
   const titleId = useId()
-  const descriptionId = useId()
   const initialFrom = initialValues?.from_address || ''
   const initialTo = initialValues?.to || ''
   const initialSubject = initialValues?.subject || ''
@@ -47,11 +43,6 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
     domains: [],
     from_addresses: [],
   })
-
-  useEffect(() => {
-    busyRef.current = busy
-    onCloseRef.current = onClose
-  }, [busy, onClose])
 
   const loadStatus = useCallback(async () => {
     setStatusState('loading')
@@ -95,46 +86,6 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
     if (open) loadStatus()
   }, [open, loadStatus])
 
-  useEffect(() => {
-    if (!open) return
-    restoreFocusRef.current = document.activeElement
-
-    const previousOverflow = document.body.style.overflow
-    const previousPaddingRight = document.body.style.paddingRight
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
-    document.body.style.overflow = 'hidden'
-    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`
-
-    const frame = requestAnimationFrame(() => closeRef.current?.focus())
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
-        event.preventDefault()
-        if (!busyRef.current) onCloseRef.current()
-        return
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return
-      const items = [...dialogRef.current.querySelectorAll(FOCUSABLE)]
-      if (!items.length) return
-      const first = items[0]
-      const last = items[items.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      cancelAnimationFrame(frame)
-      document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = previousOverflow
-      document.body.style.paddingRight = previousPaddingRight
-      restoreFocusRef.current?.focus?.()
-    }
-  }, [open])
-
   const fromAddresses = useMemo(() => {
     const unique = new Set(sending.from_addresses)
     if (form.from_address) unique.add(form.from_address)
@@ -172,7 +123,7 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
     const cleanErrors = Object.fromEntries(Object.entries(nextErrors).filter(([, value]) => value))
     setErrors(cleanErrors)
     if (Object.keys(cleanErrors).length) {
-      dialogRef.current?.querySelector('[aria-invalid="true"]')?.focus()
+      formRef.current?.querySelector('[aria-invalid="true"]')?.focus()
       return
     }
 
@@ -195,7 +146,11 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
     }
   }
 
-  if (!open || typeof document === 'undefined') return null
+  // 「填了内容」= 收件人 / 主题 / 正文和打开时不一样（回复时预填的收件人、主题不算）
+  const dirty =
+    form.to.trim() !== initialTo.trim() ||
+    form.subject.trim() !== initialSubject.trim() ||
+    form.text.trim() !== initialText.trim()
 
   const statusMessage = !sending.binding_configured
     ? t('compose.bindingMissing')
@@ -204,174 +159,146 @@ export function ComposeMailDialog({ open, onClose, initialValues, mode = 'compos
     'h-10 w-full rounded border border-border bg-surface-2 px-3 text-sm text-text placeholder:text-subtle focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-60'
   const textareaClass = `${inputClass} min-h-40 resize-y py-2.5 leading-relaxed`
 
-  return createPortal(
-    <div
-      className="overlay-in fixed inset-0 z-overlay flex items-end justify-center bg-bg/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose()
-      }}
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        className="dialog-in z-modal flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-2xl flex-col overflow-hidden rounded-t-xl border border-border bg-surface shadow-lift sm:max-h-[min(88vh,760px)] sm:rounded-xl"
-      >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-5">
-          <div className="min-w-0">
-            <h2 id={titleId} className="flex items-center gap-2 font-heading text-lg font-semibold text-heading">
-              <Mail size={18} className="shrink-0 text-accent" aria-hidden />
-              {t(mode === 'reply' ? 'compose.reply.title' : 'compose.title')}
-            </h2>
-            <p id={descriptionId} className="mt-1 text-sm text-muted">
-              {t('compose.subtitle')}
-            </p>
-          </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            aria-label={t('compose.close')}
-            title={`${t('compose.close')} (Esc)`}
-            className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted transition-colors duration-fast hover:bg-surface-2 hover:text-heading disabled:cursor-not-allowed disabled:opacity-50"
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t(mode === 'reply' ? 'compose.reply.title' : 'compose.title')}
+      icon={Mail}
+      description={t('compose.subtitle')}
+      closeLabel={t('compose.close')}
+      dirty={dirty}
+      busy={busy}
+      size="lg"
+      footer={({ requestClose }) => (
+        <span className="mh-modal__actions">
+          <Button type="button" variant="ghost" size="md" onClick={() => requestClose('cancel')} disabled={busy}>
+            {t('compose.cancel')}
+          </Button>
+          <Button
+            type="submit"
+            form={`${titleId}-form`}
+            variant="solid"
+            size="md"
+            loading={busy}
+            disabled={statusState !== 'ready' || !sending.available}
           >
-            <X size={18} aria-hidden />
-          </button>
-        </header>
-
-        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
-            {statusState === 'loading' && (
-              <div className="flex items-center gap-2 rounded border border-border bg-surface-2 px-3 py-2.5 text-sm text-muted">
-                <Spinner size={15} />
-                {t('compose.status.loading')}
-              </div>
-            )}
-            {statusState === 'error' && (
-              <div role="alert" className="flex flex-wrap items-center gap-2 rounded border border-danger/30 bg-danger/5 px-3 py-2.5 text-sm text-text">
-                <AlertCircle size={16} className="shrink-0 text-danger" aria-hidden />
-                <span className="min-w-0 flex-1">{submitError || t('compose.status.error')}</span>
-                <Button type="button" size="sm" variant="ghost" onClick={loadStatus}>
-                  <RefreshCw size={13} aria-hidden />
-                  {t('compose.status.retry')}
-                </Button>
-              </div>
-            )}
-            {statusState === 'ready' && !sending.available && (
-              <div role="status" className="flex items-start gap-2 rounded border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm text-text">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-warning" aria-hidden />
-                <span>{statusMessage}</span>
-              </div>
-            )}
-
-            <div>
-              <label htmlFor={`${titleId}-from`} className="mb-1.5 block text-sm font-medium text-text">
-                {t('compose.from')}
-              </label>
-              <select
-                id={`${titleId}-from`}
-                value={form.from_address}
-                onChange={updateField('from_address')}
-                onBlur={onBlur('from_address')}
-                aria-invalid={Boolean(errors.from_address)}
-                aria-describedby={errors.from_address ? `${titleId}-from-error` : undefined}
-                className={`${inputClass} cursor-pointer font-mono`}
-              >
-                <option value="">{t('compose.from.placeholder')}</option>
-                {fromAddresses.map((address) => (
-                  <option key={address} value={address}>{address}</option>
-                ))}
-              </select>
-              <p id={`${titleId}-from-error`} className="min-h-5 pt-1 text-xs text-danger">
-                {errors.from_address || ''}
-              </p>
-            </div>
-
-            <div>
-              <label htmlFor={`${titleId}-to`} className="mb-1.5 block text-sm font-medium text-text">
-                {t('compose.to')}
-              </label>
-              <input
-                id={`${titleId}-to`}
-                type="text"
-                inputMode="email"
-                value={form.to}
-                onChange={updateField('to')}
-                onBlur={onBlur('to')}
-                aria-invalid={Boolean(errors.to)}
-                aria-describedby={errors.to ? `${titleId}-to-error` : undefined}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={t('compose.to.placeholder')}
-                className={`${inputClass} font-mono`}
-              />
-              <p id={`${titleId}-to-error`} className="min-h-5 pt-1 text-xs text-danger">
-                {errors.to || ''}
-              </p>
-            </div>
-
-            <div>
-              <label htmlFor={`${titleId}-subject`} className="mb-1.5 block text-sm font-medium text-text">
-                {t('compose.subject')}
-              </label>
-              <input
-                id={`${titleId}-subject`}
-                value={form.subject}
-                onChange={updateField('subject')}
-                maxLength={300}
-                placeholder={t('compose.subject.placeholder')}
-                className={inputClass}
-              />
-            </div>
-
-            <div>
-              <label htmlFor={`${titleId}-body`} className="mb-1.5 block text-sm font-medium text-text">
-                {t('compose.body')}
-              </label>
-              <textarea
-                id={`${titleId}-body`}
-                value={form.text}
-                onChange={updateField('text')}
-                onBlur={onBlur('text')}
-                aria-invalid={Boolean(errors.text)}
-                aria-describedby={errors.text ? `${titleId}-body-error` : undefined}
-                placeholder={t('compose.body.placeholder')}
-                className={textareaClass}
-              />
-              <p id={`${titleId}-body-error`} className="min-h-5 pt-1 text-xs text-danger">
-                {errors.text || ''}
-              </p>
-            </div>
-
-            {submitError && statusState !== 'error' && (
-              <p role="alert" className="flex items-start gap-2 rounded border border-danger/30 bg-danger/5 px-3 py-2.5 text-sm text-text">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden />
-                <span>{submitError}</span>
-              </p>
-            )}
+            {!busy && <Send size={15} aria-hidden />}
+            {t(busy ? 'compose.sending' : mode === 'reply' ? 'compose.reply.send' : 'compose.send')}
+          </Button>
+        </span>
+      )}
+    >
+      <form ref={formRef} id={`${titleId}-form`} onSubmit={submit} className="space-y-4" noValidate>
+        {statusState === 'loading' && (
+          <div className="flex items-center gap-2 rounded border border-border bg-surface-2 px-3 py-2.5 text-sm text-muted">
+            <Spinner size={15} />
+            {t('compose.status.loading')}
           </div>
+        )}
+        {statusState === 'error' && (
+          <div role="alert" className="flex flex-wrap items-center gap-2 rounded border border-danger/30 bg-danger/5 px-3 py-2.5 text-sm text-text">
+            <AlertCircle size={16} className="shrink-0 text-danger" aria-hidden />
+            <span className="min-w-0 flex-1">{submitError || t('compose.status.error')}</span>
+            <Button type="button" size="sm" variant="ghost" onClick={loadStatus}>
+              <RefreshCw size={13} aria-hidden />
+              {t('compose.status.retry')}
+            </Button>
+          </div>
+        )}
+        {statusState === 'ready' && !sending.available && (
+          <div role="status" className="flex items-start gap-2 rounded border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm text-text">
+            <AlertCircle size={16} className="mt-0.5 shrink-0 text-warning" aria-hidden />
+            <span>{statusMessage}</span>
+          </div>
+        )}
 
-          <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-surface px-4 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
-            <Button type="button" variant="ghost" size="md" onClick={onClose} disabled={busy}>
-              {t('compose.cancel')}
-            </Button>
-            <Button
-              type="submit"
-              variant="solid"
-              size="md"
-              loading={busy}
-              disabled={statusState !== 'ready' || !sending.available}
-            >
-              {!busy && <Send size={15} aria-hidden />}
-              {t(busy ? 'compose.sending' : mode === 'reply' ? 'compose.reply.send' : 'compose.send')}
-            </Button>
-          </footer>
-        </form>
-      </section>
-    </div>,
-    document.body,
+        <div>
+          <label htmlFor={`${titleId}-from`} className="mb-1.5 block text-sm font-medium text-text">
+            {t('compose.from')}
+          </label>
+          <select
+            id={`${titleId}-from`}
+            value={form.from_address}
+            onChange={updateField('from_address')}
+            onBlur={onBlur('from_address')}
+            aria-invalid={Boolean(errors.from_address)}
+            aria-describedby={errors.from_address ? `${titleId}-from-error` : undefined}
+            className={`${inputClass} cursor-pointer font-mono`}
+          >
+            <option value="">{t('compose.from.placeholder')}</option>
+            {fromAddresses.map((address) => (
+              <option key={address} value={address}>{address}</option>
+            ))}
+          </select>
+          <p id={`${titleId}-from-error`} className="min-h-5 pt-1 text-xs text-danger">
+            {errors.from_address || ''}
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor={`${titleId}-to`} className="mb-1.5 block text-sm font-medium text-text">
+            {t('compose.to')}
+          </label>
+          <input
+            id={`${titleId}-to`}
+            type="text"
+            inputMode="email"
+            value={form.to}
+            onChange={updateField('to')}
+            onBlur={onBlur('to')}
+            aria-invalid={Boolean(errors.to)}
+            aria-describedby={errors.to ? `${titleId}-to-error` : undefined}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={t('compose.to.placeholder')}
+            className={`${inputClass} font-mono`}
+          />
+          <p id={`${titleId}-to-error`} className="min-h-5 pt-1 text-xs text-danger">
+            {errors.to || ''}
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor={`${titleId}-subject`} className="mb-1.5 block text-sm font-medium text-text">
+            {t('compose.subject')}
+          </label>
+          <input
+            id={`${titleId}-subject`}
+            value={form.subject}
+            onChange={updateField('subject')}
+            maxLength={300}
+            placeholder={t('compose.subject.placeholder')}
+            className={inputClass}
+          />
+        </div>
+
+        <div>
+          <label htmlFor={`${titleId}-body`} className="mb-1.5 block text-sm font-medium text-text">
+            {t('compose.body')}
+          </label>
+          <textarea
+            id={`${titleId}-body`}
+            value={form.text}
+            onChange={updateField('text')}
+            onBlur={onBlur('text')}
+            aria-invalid={Boolean(errors.text)}
+            aria-describedby={errors.text ? `${titleId}-body-error` : undefined}
+            placeholder={t('compose.body.placeholder')}
+            className={textareaClass}
+          />
+          <p id={`${titleId}-body-error`} className="min-h-5 pt-1 text-xs text-danger">
+            {errors.text || ''}
+          </p>
+        </div>
+
+        {submitError && statusState !== 'error' && (
+          <p role="alert" className="flex items-start gap-2 rounded border border-danger/30 bg-danger/5 px-3 py-2.5 text-sm text-text">
+            <AlertCircle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+            <span>{submitError}</span>
+          </p>
+        )}
+      </form>
+    </Modal>
   )
 }

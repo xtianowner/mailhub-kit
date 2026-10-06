@@ -15,6 +15,7 @@ import { SearchCommand } from '../components/overview/SearchCommand.jsx'
 import { AccountStatus, ActBtn, CodeCell, CopyAddr, GroupSelect, SegFilter, rowSpotlight } from '../components/work.jsx'
 import { AccountDrawer } from '../components/hotmail/AccountDrawer.jsx'
 import { ImportDialog } from '../components/hotmail/ImportDialog.jsx'
+import { useConfirm } from '../components/ConfirmDialog.jsx'
 import { useBulkRefresh } from '../components/hotmail/useBulkRefresh.js'
 
 // 一次取回全部账号（沿用 /accounts 接口，只是把每页条数放大到一次装下），筛选「状态」在前端做：
@@ -59,6 +60,7 @@ export default function OverviewPage() {
   const [rowBusy, setRowBusy] = useState({}) // id -> 'refresh' | 'code' | 'delete'
   const [rowCode, setRowCode] = useState({}) // id -> 接码结果
   const [importOpen, setImportOpen] = useState(false)
+  const [confirm, confirmDialog] = useConfirm()
 
   const setParam = useCallback((patch) => setParams((prev) => patchParams(prev, patch), { replace: true }), [setParams])
 
@@ -151,7 +153,13 @@ export default function OverviewPage() {
       }
     },
     remove: async (acc) => {
-      if (!window.confirm(`${t('action.confirmDelete')}\n${acc.email}`)) return
+      const ok = await confirm({
+        title: t('action.confirmDelete'),
+        object: acc.email,
+        description: t('action.confirmDelete.desc'),
+        confirmLabel: t('action.delete'),
+      })
+      if (!ok) return
       busyOn(acc.id, 'delete')
       try {
         await api.deleteAccount(acc.id)
@@ -395,7 +403,15 @@ export default function OverviewPage() {
         )}
       </section>
 
-      <DetailDrawer open={Boolean(acct)} onClose={closeDrawer} title={t('hm.drawer.title')} titleId="mh-acct-drawer-title">
+      {/* 与邮件抽屉一样可拖拽调宽、可全屏；宽度单独记（键 mh.drawer.width.account，邮件抽屉是 …mail） */}
+      <DetailDrawer
+        open={Boolean(acct)}
+        onClose={closeDrawer}
+        title={t('hm.drawer.title')}
+        titleId="mh-acct-drawer-title"
+        resizeKey="account"
+        allowFullscreen
+      >
         {acct && (
           <AccountDrawer
             key={acct}
@@ -411,6 +427,7 @@ export default function OverviewPage() {
       </DetailDrawer>
 
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onImported={refreshAll} />
+      {confirmDialog}
     </div>
   )
 }

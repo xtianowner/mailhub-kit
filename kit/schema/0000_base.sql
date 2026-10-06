@@ -36,3 +36,4 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_received_at ON messages(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_mailbox_received ON messages(mailbox_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mailboxes_email_lower ON mailboxes(lower(email));

@@ -15,11 +15,13 @@ import { announce } from '../lib/announce.jsx'
      · Esc / × / 取消 —— 填了东西先问一句，默认焦点在「继续编辑」；
      · 填了东西时刷新 / 关标签页由浏览器拦一下（beforeunload）。
    busy（提交中）时三条出口都暂停，避免请求发出去了界面却没了。
-   footer 可以是函数 ({ requestClose }) => 节点：底部的「取消」走同一道守卫。 */
+   footer 可以是函数 ({ requestClose }) => 节点：底部的「取消」走同一道守卫。
+   size：sm（确认框）/ md / lg；tone="danger" 时标题图标用危险色（删除确认等）；
+   closeLabel：× 的读屏名称（默认「关闭」），悬停提示自动带上 Esc。 */
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-export function Modal({ open, onClose, title, icon: Icon, description, dirty = false, busy = false, children, footer, size = 'md' }) {
+export function Modal({ open, onClose, title, icon: Icon, description, dirty = false, busy = false, children, footer, size = 'md', tone, closeLabel }) {
   const { t } = useLocale()
   const panelRef = useRef(null)
   const closeRef = useRef(null)
@@ -146,7 +148,8 @@ export function Modal({ open, onClose, title, icon: Icon, description, dirty = f
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
-            className={`mh-modal mh-modal--${size}`}
+            aria-describedby={description ? `${titleId}-desc` : undefined}
+            className={`mh-modal mh-modal--${size}${tone === 'danger' ? ' mh-modal--danger' : ''}`}
             initial={{ opacity: 0, y: 18, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.98, transition: { duration: 0.16 } }}
@@ -158,7 +161,11 @@ export function Modal({ open, onClose, title, icon: Icon, description, dirty = f
                   {Icon && <Icon size={17} aria-hidden />}
                   {title}
                 </h2>
-                {description && <p className="mh-modal__desc">{description}</p>}
+                {description && (
+                  <p id={`${titleId}-desc`} className="mh-modal__desc">
+                    {description}
+                  </p>
+                )}
               </div>
               <button
                 ref={closeRef}
@@ -166,8 +173,8 @@ export function Modal({ open, onClose, title, icon: Icon, description, dirty = f
                 className="mh-icon-btn mh-modal__close"
                 onClick={() => requestClose('button')}
                 disabled={busy}
-                aria-label={t('drawer.close')}
-                title={t('drawer.closeHint')}
+                aria-label={closeLabel || t('drawer.close')}
+                title={closeLabel ? `${closeLabel} (Esc)` : t('drawer.closeHint')}
               >
                 <X size={18} />
               </button>

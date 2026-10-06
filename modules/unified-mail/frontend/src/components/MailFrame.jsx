@@ -15,10 +15,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
    读邮件尺寸需要父页能访问 iframe 文档，所以沙箱加了 allow-same-origin；**仍然不给 allow-scripts**：
    脚本、内联事件、javascript: 链接在这个文档里一律不执行，父页只读尺寸、挂监听，不往里执行任何邮件代码。
+   allow-popups + allow-popups-to-escape-sandbox：让用户亲手点的正文链接能在新标签页打开（新页面是正常网页，
+   不继承沙箱）。邮件没有脚本，自己弹不出窗口；链接在 MailBody 里已清洗成只剩 http / https / mailto，
+   并统一 rel="noopener noreferrer"。不给 allow-top-navigation：邮件不能把 MailHub 本身跳走。
    同源的副作用：用户点「显示图片」后，指向本站的图片请求会带上本站 Cookie（云端版登录态是 Cookie）。
    credentialless 让这个 iframe 里的请求一律不带 Cookie（Chrome / Edge 支持，父页照样能读文档）；
    不支持它的浏览器会忽略这个属性。
    万一读不到文档（极端浏览器），退回旧的固定高度 + 内部滚动，邮件仍可看。 */
+
+// 不给 allow-scripts、不给 allow-top-navigation。放开哪一项都要先想清楚它多带出哪些请求（LESSONS L37）。
+const SANDBOX = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox'
 
 export const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 const MAX_LAYOUT_WIDTH = 4000 // 极端邮件的排版宽度上限，防止异常尺寸把页面撑爆
@@ -170,7 +176,7 @@ export function MailFrame({ srcDoc, title, zoom = 'fit', onScale, className }) {
     return (
       <iframe
         ref={frameRef}
-        sandbox="allow-same-origin"
+        sandbox={SANDBOX}
         credentialless=""
         srcDoc={srcDoc}
         title={title}
@@ -185,8 +191,8 @@ export function MailFrame({ srcDoc, title, zoom = 'fit', onScale, className }) {
       <div ref={sizerRef} className="mh-mailframe__sizer">
         <iframe
           ref={frameRef}
-          // 不给 allow-scripts：邮件里的脚本一律不执行。allow-same-origin 只为让父页读到排版尺寸（见文件头）。
-          sandbox="allow-same-origin"
+          // 不给 allow-scripts：邮件里的脚本一律不执行。allow-same-origin 让父页读到排版尺寸，allow-popups 让正文链接能在新标签页打开（见文件头）。
+          sandbox={SANDBOX}
           credentialless=""
           srcDoc={srcDoc}
           title={title}

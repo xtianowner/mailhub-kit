@@ -1135,6 +1135,9 @@
   .mh-modal--lg {
     max-width: 660px;
   }
+  .mh-modal--sm {
+    max-width: 440px;
+  }
 }
 .mh-modal__head {
   flex: none;
@@ -1161,6 +1164,9 @@
 .mh-modal__title > svg {
   flex: none;
   color: rgb(var(--accent-ink));
+}
+.mh-modal--danger .mh-modal__title > svg {
+  color: rgb(var(--danger));
 }
 .mh-modal__desc {
   margin: 4px 0 0;
@@ -1237,6 +1243,25 @@
 }
 .mh-modal__confirm .mh-modal__actions {
   width: auto;
+}
+/* 危险操作确认框（ConfirmDialog）：被操作的对象等宽显示、长地址可断行；后果说明用正文色 */
+.mh-confirm__object {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgb(var(--border));
+  background: rgb(var(--bg-tint));
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgb(var(--heading));
+  overflow-wrap: anywhere;
+}
+.mh-confirm__desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgb(var(--text));
 }
 
 /* ───────────────────────── 表单 ───────────────────────── */
@@ -1716,6 +1741,48 @@
   padding: 12px 0;
   font-size: 13.5px;
   color: rgb(var(--muted));
+}
+
+/* 新建信箱后的等码面板（MailboxWatch）：复用账号抽屉的版式，只补等待态的几行字 */
+.mh-watch__lead {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgb(var(--muted));
+}
+.mh-watch__waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: rgb(var(--heading));
+}
+.mh-watch__hint,
+.mh-watch__err {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 44ch;
+}
+.mh-watch__hint > svg,
+.mh-watch__err > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.mh-watch__err {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgb(var(--text));
+  overflow-wrap: anywhere;
+}
+.mh-watch__err > svg {
+  color: rgb(var(--warning));
+}
+.mh-watch__last {
+  font-size: 12px;
+  color: rgb(var(--muted));
+  font-variant-numeric: tabular-nums;
 }
 
 /* 邮件小列表（抽屉 / 账号页）：整行是链接或按钮，验证码胶囊在最右单独一格 */
