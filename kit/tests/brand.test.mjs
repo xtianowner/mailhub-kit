@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SETUP = path.join(KIT, "scripts", "setup.mjs");
@@ -80,7 +80,8 @@ test("不认识的形象名被拒绝", () => {
 // CI 与 README「开发者自测」会不 init 直接 build：缺配置时不能报错，按新安装默认值构建（2026-10-06 CI 曾因此失败）。
 test("构建选形象：还没 init → xtian；老配置 → default；配置了 custom → custom", () => {
   const pick = (dir) => spawnSync(process.execPath, ["--input-type=module", "-e",
-    `const m = await import(${JSON.stringify(path.join(KIT, "scripts", "lib", "build.mjs"))}); console.log(m.brandForBuild());`],
+    // Windows 上 import() 不接受 C:\\ 绝对路径，必须转成 file:// 地址
+    `const m = await import(${JSON.stringify(pathToFileURL(path.join(KIT, "scripts", "lib", "build.mjs")).href)}); console.log(m.brandForBuild());`],
   { env: { ...process.env, MAILHUB_STATE_DIR: dir }, encoding: "utf8" });
   const s = sandbox();
   let r = pick(s.dir);
