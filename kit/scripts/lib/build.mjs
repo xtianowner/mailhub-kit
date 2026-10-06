@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { FRONTEND_DIR, KIT, StepError, WORKER_DIR, log, run } from "./common.mjs";
+import { CONFIG_FILE, FRONTEND_DIR, KIT, StepError, WORKER_DIR, log, readJson, run } from "./common.mjs";
 import { loadConfig } from "./config.mjs";
 
 const NPM_DIRS = [KIT, WORKER_DIR, FRONTEND_DIR];
@@ -37,13 +37,21 @@ export function installDeps({ registry } = {}) {
   }
 }
 
+/**
+ * 构建用哪个形象：有配置就按配置（老配置没有 brand 时是通用插画）；
+ * 还没 init 时（开发者自测、CI 直接 build）按新安装的默认值 xtian，不能因为缺配置就构建失败。
+ */
+export function brandForBuild() {
+  return readJson(CONFIG_FILE) ? loadConfig().brand : "xtian";
+}
+
 /** 构建云端同款前端（本地版与云端版用同一份产物）。 */
 export function buildFrontend() {
   const vite = path.join(FRONTEND_DIR, "node_modules", "vite", "bin", "vite.js");
   if (!fs.existsSync(vite)) throw new StepError("前端依赖未安装", { next: "node kit/scripts/setup.mjs deps" });
   const out = path.join(FRONTEND_DIR, "dist-cloud");
   // 形象（品牌包）按配置选：vite.config.js 读 VITE_BRAND，目录不存在时退回通用插画。
-  const { brand } = loadConfig();
+  const brand = brandForBuild();
   if (brand === "custom" && !fs.existsSync(path.join(FRONTEND_DIR, "src", "brand", "custom", "brand.js"))) {
     throw new StepError("选了自己的形象，但还没有 modules/unified-mail/frontend/src/brand/custom/brand.js", {
       next: "按 SKILL.md 第 9 节「换形象」准备好图片，或改用作者形象：node kit/scripts/setup.mjs init --brand xtian",

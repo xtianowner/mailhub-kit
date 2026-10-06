@@ -76,3 +76,19 @@ test("不认识的形象名被拒绝", () => {
   assert.match(r.stdout + r.stderr, /brand/);
   fs.rmSync(s.dir, { recursive: true, force: true });
 });
+
+// CI 与 README「开发者自测」会不 init 直接 build：缺配置时不能报错，按新安装默认值构建（2026-10-06 CI 曾因此失败）。
+test("构建选形象：还没 init → xtian；老配置 → default；配置了 custom → custom", () => {
+  const pick = (dir) => spawnSync(process.execPath, ["--input-type=module", "-e",
+    `const m = await import(${JSON.stringify(path.join(KIT, "scripts", "lib", "build.mjs"))}); console.log(m.brandForBuild());`],
+  { env: { ...process.env, MAILHUB_STATE_DIR: dir }, encoding: "utf8" });
+  const s = sandbox();
+  let r = pick(s.dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "xtian");
+  s.write("config.json", { domain: "demo.test", web_host: "mail.demo.test", login_user: "me@example.org" });
+  assert.equal(pick(s.dir).stdout.trim(), "default");
+  s.write("config.json", { domain: "demo.test", web_host: "mail.demo.test", login_user: "me@example.org", brand: "custom" });
+  assert.equal(pick(s.dir).stdout.trim(), "custom");
+  fs.rmSync(s.dir, { recursive: true, force: true });
+});
