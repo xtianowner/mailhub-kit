@@ -44,7 +44,7 @@
 
 AI 会自己把项目下载到 `~/mailhub-kit`（Windows 为 `%USERPROFILE%\mailhub-kit`）。如果你已经下载或克隆过这个仓库，就把那句话里的网址换成本地文件夹。
 
-AI 会先把自己注册成 `mailhub-setup` 技能，然后**一次性问你几个问题**：域名、登录网页地址、登录用户名等，接着自动完成全部搭建。
+AI 会先把自己注册成 `mailhub-setup` 技能，然后**一次性问你几个问题**：域名、登录网页地址、登录用户名、网页上用什么形象等，接着自动完成全部搭建。
 
 这个 AI 助手是一次性的，它只有一个目标：**把你的邮箱搭建成功**。
 
@@ -138,4 +138,6 @@ node kit/tests/e2e-local.mjs               # 登记/自动模式 → 真实本�
 
 ## 许可
 
-MIT
+- 代码：MIT。
+- 作者形象（`modules/unified-mail/frontend/src/brand/xtian/` 里的手办图）：[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.zh-hans)。新安装默认使用，可以免费用、也可以商用，条件是保留页脚「by XTian」署名和指向作者博客的链接，详见该目录的 `LICENSE.md`。
+- 不想用作者形象：安装时告诉 AI「换成我自己的形象」（它会教你生成并替换）或「不要形象」（改用通用信封插画、不显示署名）。装好以后也能随时换，见 `kit/skill/mailhub-setup/SKILL.md` 第 9 节「换形象」。

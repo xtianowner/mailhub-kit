@@ -21,7 +21,7 @@ const hubPort = Number(
 )
 
 // 品牌包（src/brand/<名字>/）在构建时选定：VITE_BRAND 指向的目录存在就用它，否则退回 default。
-// 开源版没有作者品牌包，即使沿用私有版的构建脚本也会安静地退回 default，不会构建失败。
+// 选中的品牌包目录不存在时（例如还没准备好 custom），会安静地退回 default，不会构建失败；安装器另有前置检查。
 // 只把选中的那一个解析进产物（别名 #brand），其它品牌包的图片不会被打包。
 const BRAND_ROOT = fileURLToPath(new URL('./src/brand/', import.meta.url))
 function pickBrand() {

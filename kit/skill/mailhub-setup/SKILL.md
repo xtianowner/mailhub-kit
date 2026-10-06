@@ -95,6 +95,7 @@ Windows 上跑过 `configs` 之后，也可以用 `.\mailhub.cmd status`：它�
 > 4. 登录用户名用什么？建议用你常用的邮箱（例：you@gmail.com）。**密码不用现在告诉我**，稍后你在自己的终端窗口里输入，不经过聊天。
 > 5. 需要「数据接口」做二次开发吗？一般不需要。不需要的话，我就用默认地址 api-mail.你的域名（系统内部也要用它）；需要的话，告诉我你想用的地址。
 > 6. 要保存邮件附件吗？需要在 Cloudflare 绑定信用卡或 PayPal 开通 R2（有 10GB 免费额度）。默认不保存，以后想开再说。
+> 7. 网页上的形象：默认用作者筱天（XTian）的手办形象，出现在登录页和空页面里，页脚保留一行「by XTian」署名、链接到作者博客。形象按 CC BY 4.0 授权，可以免费用、也可以商用，条件是保留这行署名；选默认就表示同意。你也可以换成自己的形象（我来教你做），或者都不要（用通用的信封插画）。不回答就用默认。
 >
 > 之后你只需要再做几件小事，到时我会提醒你：
 > - 打开我给你的 Cloudflare 授权页，点「允许」（有时要输入一个设备码）；
@@ -107,10 +108,11 @@ Windows 上跑过 `configs` 之后，也可以用 `.\mailhub.cmd status`：它�
 
 - 第 2 题答「有」：先说明后果，请用户选「换一个没在用的域名」或「确认放弃原邮箱」。选了放弃只算表明方向，不算同意。后面真遇到 MX 冲突时，要把检测到的收信服务器列给用户，再确认一次，然后才加 `--allow-existing-mx`。
 - 第 3 题或第 5 题给的地址不是这个域名的子域名：请用户换一个。
+- 第 7 题：用默认（作者形象）→ `--brand xtian`；都不要 → `--brand default`；想用自己的形象 → 先用 `--brand default` 把系统搭通，搭好后按第 9 节「换形象」换成自己的（先搭通再改界面，出了问题好分清原因）。
 - 拿到答案后执行下面两条。不要二次开发就不加 `--api-host`；要保存附件才加 `--attachments`。
 
 ```
-node kit/scripts/setup.mjs init --domain <域名> --web-host <登录网页地址> --login-user <用户名> [--api-host <数据接口地址>] [--attachments]
+node kit/scripts/setup.mjs init --domain <域名> --web-host <登录网页地址> --login-user <用户名> --brand <xtian|default> [--api-host <数据接口地址>] [--attachments]
 node kit/scripts/setup.mjs plan
 ```
 
@@ -254,7 +256,8 @@ node kit/scripts/setup.mjs plan
 |---|---|
 | 切换收信模式 | 请用户在网页「设置 → 收信模式」里选「登记后才收信」或「自动创建邮箱」，保存后云端和本地同时生效，已有邮件不删。先讲清取舍：自动模式任意名字都能直接收信，也会收下发往随机地址的垃圾信；登记模式更干净，但每个地址要先登记 |
 | 登记一个邮箱 | 网页「域名邮箱 → 新建」。自动模式下自动建出来的地址，切回登记模式后要在列表里点「登记」才能继续收信，已有邮件保留 |
-| 优化网页界面（样式、文案、布局） | **先问清楚**用户想要什么效果，必要时截图对照现状（例如现在的主色本来就是青绿）。代码在 `modules/unified-mail/frontend/src/`（React + Tailwind）：<br>· 颜色、字体等设计变量在 `styles/tokens.css`：颜色写成空格分隔的 RGB 三元组（如 `--accent: 13 148 136`），浅色、深色各一套，半透明写 `rgb(var(--accent) / 0.12)`；换主色就改 `--accent`、`--accent-strong` 这一组和浅色的 `--accent-fill-hover`；改完要检查浅底小字和按钮白字的对比度不低于 4.5:1；<br>· 界面文字在 `i18n/messages.js`，中文、英文两套要同步改；<br>· 页面在 `pages/`。云端版只用到 `HubOverviewPage`（统一总览）、`DomainMailPage`（域名邮箱）、`MessageDetailPage`（邮件详情）、`CloudSettingsPage`（设置）、`LoginPage`（登录）这几个；Hotmail 相关页面不会显示，不用改。总览的组件在 `components/overview/`。<br>· 登录页、空状态、404 的插画在品牌包 `brand/default/` 里；想换成自己的形象，可以照它新建一个 `brand/<名字>/`，构建时设环境变量 `VITE_BRAND=<名字>`。<br>**本地预览**：先 `node kit/scripts/setup.mjs build`，再重启本地版（macOS / Linux：`./stop.sh && ./start.sh`；Windows：先双击 `stop.cmd`，再双击 `start.cmd`）。<br>**登录页只在云端出现**（本地版免登录，看不到登录页）：改登录页要先 `node kit/scripts/setup.mjs deploy-web`，再用浏览器的无痕窗口打开登录网址预览。<br>用户满意后发布到云端：`node kit/scripts/setup.mjs deploy-web` |
+| 优化网页界面（样式、文案、布局） | **先问清楚**用户想要什么效果，必要时截图对照现状（例如现在的主色本来就是青绿）。代码在 `modules/unified-mail/frontend/src/`（React + Tailwind）：<br>· 颜色、字体等设计变量在 `styles/tokens.css`：颜色写成空格分隔的 RGB 三元组（如 `--accent: 13 148 136`），浅色、深色各一套，半透明写 `rgb(var(--accent) / 0.12)`；换主色就改 `--accent`、`--accent-strong` 这一组和浅色的 `--accent-fill-hover`；改完要检查浅底小字和按钮白字的对比度不低于 4.5:1；<br>· 界面文字在 `i18n/messages.js`，中文、英文两套要同步改；<br>· 页面在 `pages/`。云端版只用到 `HubOverviewPage`（统一总览）、`DomainMailPage`（域名邮箱）、`MessageDetailPage`（邮件详情）、`CloudSettingsPage`（设置）、`LoginPage`（登录）这几个；Hotmail 相关页面不会显示，不用改。总览的组件在 `components/overview/`。<br>· 登录页、空状态、404 的形象在品牌包 `brand/` 里，换形象见下一行。<br>**本地预览**：先 `node kit/scripts/setup.mjs build`，再重启本地版（macOS / Linux：`./stop.sh && ./start.sh`；Windows：先双击 `stop.cmd`，再双击 `start.cmd`）。<br>**登录页只在云端出现**（本地版免登录，看不到登录页）：改登录页要先 `node kit/scripts/setup.mjs deploy-web`，再用浏览器的无痕窗口打开登录网址预览。<br>用户满意后发布到云端：`node kit/scripts/setup.mjs deploy-web` |
+| 换形象（作者形象 / 自己的形象 / 不要形象） | 三种都只影响网页：安装器只重跑 `build`、`deploy-web`、`local`，收信、接口和用户之前的确认都保留。改完照常 `verify`，再请用户打开网页看一眼。<br>· **作者形象**：`init --brand xtian`。按 CC BY 4.0 使用，页脚「by XTian」署名和链接不能删，条件写在 `modules/unified-mail/frontend/src/brand/xtian/LICENSE.md`，使用前向用户讲清楚。<br>· **自己的形象**：① 准备同一个角色的三张透明底立绘（PNG 或 webp，高约 900px）：`hero` 抱着一封信（登录页）、`search` 踮脚找信（空列表）、`wait` 坐着等信（加载和 404）。用户没有现成的图，就帮他用 AI 生成，提示词骨架：「同一个角色的三张全身立绘，透明背景，人物居中，画面里不要任何文字：① 双手抱着一封带封蜡的信；② 踮着脚把信封举过头顶张望；③ 坐在一摞信封上等待」，人物外貌按用户描述填。② 复制作者品牌包做底：`cp -r modules/unified-mail/frontend/src/brand/xtian modules/unified-mail/frontend/src/brand/custom`（Windows 用资源管理器复制并改名），用三张新图替换同名文件，**删掉 `custom/LICENSE.md`**（那是作者形象的授权）。③ 改 `custom/brand.js`：`id` 改成 `custom`，填三张图的像素宽高和 `alt` 描述；`hero.seal` 是信封封蜡在图里的相对位置 `[横向比例, 纵向比例]`，登录页的光点会汇到这里；`credit` 改成用户自己的署名和链接，不要署名就删掉整段。④ `init --brand custom` → `build` → `deploy-web` → 重启本地版。<br>· **不要形象**：`init --brand default`，换成通用信封插画，页脚不显示署名。 |
 | 换登录网页或数据接口的地址 | `init` 只传要改的参数，比如 `init --web-host <新地址>`，没传的会沿用原值。然后运行 `status`，从「下一步」起依次跑到 `verify`，中途会重新做冲突检查。旧地址如果不再需要，请用户到 Cloudflare → Workers & Pages → 对应的 Worker → Settings → Domains & Routes 里移除 |
 | 换登录用户名或密码 | 请用户运行交付信息里的「改登录密码」命令 |
 | 开启附件保存 | 先说明需要绑卡，用户同意后运行 `init --attachments`，然后 `status`，从「下一步」起依次跑到 `verify`。关闭附件用 `init --no-attachments` |
@@ -289,3 +292,5 @@ node kit/scripts/setup.mjs plan
   zip 更新（没有 git 时）：① 先问用户改过哪些文件（网页样式、文案等），把这些文件备份到项目根以外；② 把新版 zip 解压到一个临时目录；③ 把新版文件复制到项目根，**不碰 `.mailhub/`**（进度、配置和本机密钥都在里面）；④ 用户改过的文件和新版有冲突时，先和他确认怎么合并，不直接覆盖；⑤ 接着做上面的第 2 步后半句（重新复制 skill）和第 3–5 步。
 
   从「任意前缀自动收信」的旧版本升级时：数据库里已经有信箱或邮件的，升级后保持自动模式，收信行为不变；想改成登记模式，在设置页切换。
+
+  从没有「形象」选项的旧版本升级时（`.mailhub/config.json` 里没有 `brand`）：网页保持原来的通用信封插画，不会被换掉。告诉用户新版可以用作者筱天（XTian）的形象，并把第 4 节第 7 题的说明讲给他听，问一次：要换就 `init --brand xtian`（或按第 9 节换成自己的），不换就 `init --brand default` 把选择记下来，以后更新不再问。

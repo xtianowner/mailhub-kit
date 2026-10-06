@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { FRONTEND_DIR, KIT, StepError, WORKER_DIR, log, run } from "./common.mjs";
+import { loadConfig } from "./config.mjs";
 
 const NPM_DIRS = [KIT, WORKER_DIR, FRONTEND_DIR];
 
@@ -41,8 +42,15 @@ export function buildFrontend() {
   const vite = path.join(FRONTEND_DIR, "node_modules", "vite", "bin", "vite.js");
   if (!fs.existsSync(vite)) throw new StepError("前端依赖未安装", { next: "node kit/scripts/setup.mjs deps" });
   const out = path.join(FRONTEND_DIR, "dist-cloud");
+  // 形象（品牌包）按配置选：vite.config.js 读 VITE_BRAND，目录不存在时退回通用插画。
+  const { brand } = loadConfig();
+  if (brand === "custom" && !fs.existsSync(path.join(FRONTEND_DIR, "src", "brand", "custom", "brand.js"))) {
+    throw new StepError("选了自己的形象，但还没有 modules/unified-mail/frontend/src/brand/custom/brand.js", {
+      next: "按 SKILL.md 第 9 节「换形象」准备好图片，或改用作者形象：node kit/scripts/setup.mjs init --brand xtian",
+    });
+  }
   const res = run(process.execPath, [vite, "build", "--outDir", "dist-cloud", "--emptyOutDir"], {
-    cwd: FRONTEND_DIR, env: { VITE_TARGET: "cloud" },
+    cwd: FRONTEND_DIR, env: { VITE_TARGET: "cloud", VITE_BRAND: brand },
   });
   if (res.code !== 0) throw new StepError("前端构建失败\n" + (res.stderr || res.stdout).slice(-1500));
 
@@ -52,7 +60,7 @@ export function buildFrontend() {
   for (const f of fs.readdirSync(out, { recursive: true })) {
     if (path.basename(String(f)) === ".DS_Store") fs.rmSync(path.join(out, String(f)));
   }
-  log.ok("前端已构建：modules/unified-mail/frontend/dist-cloud");
+  log.ok(`前端已构建（形象：${brand}）：modules/unified-mail/frontend/dist-cloud`);
 }
 
 export const frontendBuilt = () => fs.existsSync(path.join(FRONTEND_DIR, "dist-cloud", "index.html"));

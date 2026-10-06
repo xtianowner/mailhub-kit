@@ -7,6 +7,7 @@
 // 用法（给 agent 读，详见 kit/skill/mailhub-setup/SKILL.md）：
 //   node kit/scripts/setup.mjs init --domain example.com --web-host mail.example.com --login-user you@gmail.com
 //                                   [--api-host api-mail.example.com] [--attachments] [--prefix mailhub]
+//                                   [--brand xtian|custom|default]   # 网页形象，新安装默认 xtian
 //   node kit/scripts/setup.mjs all            按顺序重跑全部步骤（复用已有资源）
 //   node kit/scripts/setup.mjs <步骤名>        只跑某一步
 //   node kit/scripts/setup.mjs plan           只打印计划，不做任何改动
@@ -26,7 +27,7 @@ import {
   spawnDetached, wrangler, wranglerOk, writeDevVars, writeJson,
 } from "./lib/common.mjs";
 import {
-  configPath, loadConfig, names, saveConfig, wranglerConfigs,
+  LEGACY_BRAND, configPath, loadConfig, names, saveConfig, wranglerConfigs,
 } from "./lib/config.mjs";
 import {
   catchAllRule, fetchx, findZone, isCloudflareMx, lookupDns, lookupMx, routingSettings,
@@ -74,10 +75,21 @@ function stepInit() {
     login_user: opt("login-user") ?? prev.login_user,
     attachments: flag("attachments") ? true : flag("no-attachments") ? false : (prev.attachments ?? false),
     prefix: opt("prefix") ?? prev.prefix ?? "mailhub",
+    // 新安装默认作者形象；老配置没有这一项时保持通用插画（LEGACY_BRAND），更新不会悄悄换形象。
+    brand: opt("brand") ?? prev.brand ?? (before ? LEGACY_BRAND : "xtian"),
   };
   saveConfig(cfg);
   const saved = loadConfig();
-  if (before && JSON.stringify(before) !== JSON.stringify(saved)) {
+  const changed = before
+    ? Object.keys(saved).filter((k) => JSON.stringify(before[k] ?? (k === "brand" ? LEGACY_BRAND : undefined)) !== JSON.stringify(saved[k]))
+    : [];
+  if (changed.length && changed.every((k) => k === "brand")) {
+    // 只换形象：收信、接口、域名都不受影响，只需重新构建网页、部署登录网页、重启本地版。
+    const { done = {} } = loadState();
+    for (const k of ["build", "deploy-web", "local"]) delete done[k];
+    saveState({ done });
+    log.info(`形象改为 ${saved.brand}：接下来只需重跑 build → deploy-web → local（或直接 all）`);
+  } else if (changed.length) {
     // 配置变更后，完成记录与用户确认不再代表当前配置（各步可重跑，已有资源会复用）。
     const { done = {} } = loadState();
     saveState({ done: { deps: done.deps, login: done.login }, user_confirmed: null, test_prepared: null, last_error: null });

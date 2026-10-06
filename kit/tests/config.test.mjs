@@ -34,6 +34,13 @@ test("模板值与空值被拒绝", () => {
   assert.throws(() => validateConfig({ ...base, prefix: "Bad_Prefix" }), /prefix/);
 });
 
+test("形象：老配置没有 brand 时保持通用插画；只接受 xtian / custom / default", () => {
+  assert.equal(validateConfig(base).brand, "default");
+  assert.equal(validateConfig({ ...base, brand: "XTian" }).brand, "xtian");
+  assert.equal(validateConfig({ ...base, brand: "custom" }).brand, "custom");
+  assert.throws(() => validateConfig({ ...base, brand: "mine" }), /brand/);
+});
+
 test("资源名由前缀派生，可在同一账号并存多套", () => {
   assert.deepEqual(names(validateConfig({ ...base, prefix: "mh2" })),
     { db: "mh2-db", bucket: "mh2-attachments", inbox: "mh2-inbox", api: "mh2-api", web: "mh2-web" });

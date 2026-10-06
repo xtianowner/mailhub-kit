@@ -1,4 +1,4 @@
-// 通用品牌包（开源版默认）：自绘的信封插画，不含任何个人形象，也没有页脚署名。
+// 通用品牌包（init --brand default，以及老版本升级上来的安装）：自绘的信封插画，不含任何个人形象，也没有页脚署名。
 // 想换成自己的形象：照 ../index.js 顶部的约定新建一个同级目录（含 brand.js），构建时设 VITE_BRAND=<目录名>。
 import { EnvelopeArt } from './EnvelopeArt.jsx'
 

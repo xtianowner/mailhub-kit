@@ -8,7 +8,7 @@
 //   credit    （可选）页脚署名 { name, href, label: { zh, en } }；null = 不显示署名
 //
 // 选哪个品牌包在**构建时**决定（vite.config.js）：读环境变量 VITE_BRAND，对应目录存在就用它，
-// 不设或目录不存在（例如开源版里没有作者品牌包）一律退回 default。
+// 不设或目录不存在（例如还没准备好 src/brand/custom/）一律退回 default。
 // 之所以不在这里用 import.meta.glob 列举全部品牌包：glob 会把每个品牌包都打进产物，
 // 开源 / 默认构建里就会夹带作者的形象图；构建时只解析选中的那一个，产物里只有它。
 import pack from '#brand/brand.js'

@@ -9,6 +9,11 @@ import {
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 const PREFIX_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
 
+/** 网页上的形象：xtian = 作者筱天（XTian）的形象，新安装默认；custom = 用户自己的形象（src/brand/custom/）；default = 通用信封插画。 */
+export const BRANDS = ["xtian", "custom", "default"];
+/** 老配置没有 brand：保持原来的通用插画，不在更新时悄悄换成作者形象。 */
+export const LEGACY_BRAND = "default";
+
 /** 问询模板：SKILL.md 让 agent 把用户回答填进这些字段。 */
 export const CONFIG_TEMPLATE = {
   domain: "example.com",
@@ -17,6 +22,7 @@ export const CONFIG_TEMPLATE = {
   login_user: "you@gmail.com",
   attachments: false,
   prefix: "mailhub",
+  brand: "xtian",
 };
 
 const norm = (s) => String(s ?? "").trim().toLowerCase().replace(/\.$/, "");
@@ -31,6 +37,7 @@ export function validateConfig(raw) {
   cfg.login_user = String(cfg.login_user ?? "").trim();
   cfg.prefix = norm(cfg.prefix) || "mailhub";
   cfg.attachments = cfg.attachments === true;
+  cfg.brand = norm(cfg.brand) || LEGACY_BRAND;
 
   if (!HOST_RE.test(cfg.domain)) errors.push(`domain「${cfg.domain}」不是合法域名（例：example.com）`);
   for (const key of ["web_host", "api_host"]) {
@@ -44,6 +51,7 @@ export function validateConfig(raw) {
   if (cfg.web_host && cfg.web_host === cfg.api_host) errors.push("web_host 和 api_host 不能相同");
   if (!cfg.login_user) errors.push("login_user（登录用户名）不能为空");
   if (!PREFIX_RE.test(cfg.prefix)) errors.push(`prefix「${cfg.prefix}」只能是小写字母、数字、连字符（3–32 位）`);
+  if (!BRANDS.includes(cfg.brand)) errors.push(`brand「${cfg.brand}」只能是 xtian（作者形象）/ custom（你自己的形象）/ default（通用信封插画）`);
   if (cfg.domain === "example.com") errors.push("domain 还是模板里的 example.com，请换成你的域名");
 
   if (errors.length) {
