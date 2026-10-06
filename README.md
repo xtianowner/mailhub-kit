@@ -22,7 +22,7 @@
 |---|---|
 | ![域名邮箱](kit/docs/screenshots/02-mailboxes.png) | ![信箱列表](kit/docs/screenshots/03-mailbox-list.png) |
 | **邮件详情：右侧抽屉，验证码置顶一点即复制；正文可缩放、可全屏** | **云端登录页：账号密码保护** |
-| ![邮件详情](kit/docs/screenshots/04-message.png) | ![登录](kit/docs/screenshots/05-login.png) |
+| ![邮件详情](kit/docs/screenshots/04-message.png) | ![登录（默认作者形象，可换）](kit/docs/screenshots/05-login.png) |
 | **深色模式** | **设置：收信模式一键切换** |
 | ![深色模式](kit/docs/screenshots/06-overview-dark.png) | ![设置：收信模式](kit/docs/screenshots/08-settings.png) |
 
